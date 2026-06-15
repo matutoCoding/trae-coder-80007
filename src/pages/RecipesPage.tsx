@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import {
   BookOpen, Search, Tag, Plus, X, Trash2, Edit2, Download,
   Sparkles, Target, Scale, Beaker, Clock, ChevronRight,
+  Star, GitBranch, Calendar, TrendingUp, Award,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import PaperCard from '@/components/layout/PaperCard';
@@ -11,7 +12,7 @@ import ProgressBar, { Badge } from '@/components/ui/ProgressBar';
 import MetricDisplay from '@/components/ui/MetricDisplay';
 import { usePaperStore } from '@/store/paperStore';
 import { calcRatio } from '@/utils/calculator';
-import type { Recipe } from '@/types';
+import type { Recipe, RecipeVersion } from '@/types';
 
 interface EditingRecipe {
   id?: string;
@@ -20,6 +21,15 @@ interface EditingRecipe {
   note: string;
   tags: string[];
 }
+
+type FilterType = 'all' | 'recommended' | 'recent' | 'quality';
+
+const FILTER_OPTIONS: Array<{ value: FilterType; label: string; icon: typeof Star }> = [
+  { value: 'all', label: '全部', icon: BookOpen },
+  { value: 'recommended', label: '推荐方案', icon: Star },
+  { value: 'recent', label: '最近使用', icon: Clock },
+  { value: 'quality', label: '质量优先', icon: Award },
+];
 
 export default function RecipesPage() {
   const recipes = usePaperStore((s) => s.recipes);
@@ -30,6 +40,11 @@ export default function RecipesPage() {
   const addRecipe = usePaperStore((s) => s.addRecipe);
   const loadRecipeToRatio = usePaperStore((s) => s.loadRecipeToRatio);
   const currentConfig = usePaperStore((s) => s.ratioConfig);
+  const setRecommendedVersion = usePaperStore((s) => s.setRecommendedVersion);
+  const addRecipeVersion = usePaperStore((s) => s.addRecipeVersion);
+  const recipeFilter = usePaperStore((s) => s.recipeFilter);
+  const setRecipeFilter = usePaperStore((s) => s.setRecipeFilter);
+  const batches = usePaperStore((s) => s.batches);
   const navigate = useNavigate();
 
   const [kw, setKw] = useState('');
@@ -38,6 +53,7 @@ export default function RecipesPage() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<EditingRecipe | null>(null);
   const [tagInput, setTagInput] = useState('');
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
 
   const categories = useMemo(() => {
     const set = new Set(recipes.map((r) => r.category));
@@ -45,22 +61,47 @@ export default function RecipesPage() {
   }, [recipes]);
 
   const filtered = useMemo(() => {
-    return recipes.filter((r) => {
+    let list = [...recipes];
+
+    list = list.filter((r) => {
       if (catFilter !== '全部' && r.category !== catFilter) return false;
       if (!kw.trim()) return true;
       const k = kw.trim().toLowerCase();
       return (
         r.name.toLowerCase().includes(k) ||
+        r.paperType?.toLowerCase().includes(k) ||
         r.config.paperType.toLowerCase().includes(k) ||
         r.tags.some((t) => t.toLowerCase().includes(k))
       );
     });
-  }, [recipes, kw, catFilter]);
+
+    if (recipeFilter === 'recommended') {
+      list = list.filter((r) => r.recommendedVersionId);
+    } else if (recipeFilter === 'recent') {
+      list = list
+        .filter((r) => r.lastUsedAt)
+        .sort((a, b) => new Date(b.lastUsedAt || '').getTime() - new Date(a.lastUsedAt || '').getTime());
+    } else if (recipeFilter === 'quality') {
+      list = list.sort((a, b) => {
+        const aVersions = a.versions || [];
+        const bVersions = b.versions || [];
+        return bVersions.length - aVersions.length;
+      });
+    }
+
+    return list;
+  }, [recipes, kw, catFilter, recipeFilter]);
 
   const selected = recipes.find((r) => r.id === selectedId) || null;
+  const versions = selected?.versions || [];
+  const activeVersionId = selectedVersionId || selected?.recommendedVersionId || versions[0]?.id;
+  const activeVersion = versions.find((v) => v.id === activeVersionId) || null;
+
+  const displayConfig = activeVersion?.config || selected?.config || currentConfig;
+
   const ratio = useMemo(
-    () => (selected ? calcRatio({ config: selected.config, fibers, sizingAgents }) : null),
-    [selected, fibers, sizingAgents],
+    () => (selected ? calcRatio({ config: displayConfig, fibers, sizingAgents }) : null),
+    [selected, displayConfig, fibers, sizingAgents],
   );
 
   const startNew = () => {
@@ -85,9 +126,11 @@ export default function RecipesPage() {
       addRecipe({
         name: editing.name,
         category: editing.category,
+        paperType: currentConfig.paperType,
         config: currentConfig,
         tags: editing.tags,
         note: editing.note,
+        versions: [],
       });
     }
     setShowForm(false);
@@ -101,9 +144,51 @@ export default function RecipesPage() {
     setTagInput('');
   };
 
-  const handleLoad = (r: Recipe) => {
-    loadRecipeToRatio(r.id);
+  const handleLoad = (r: Recipe, versionId?: string) => {
+    loadRecipeToRatio(r.id, versionId);
     navigate('/ratio');
+  };
+
+  const handleSetRecommended = (r: Recipe, versionId: string) => {
+    setRecommendedVersion(r.id, versionId);
+    alert('已设为推荐版本');
+  };
+
+  const handleAddVersion = (r: Recipe) => {
+    const qualityBatches = batches
+      .filter((b) => b.configSnapshot.paperType === r.paperType && b.qualityLevel === '优')
+      .slice(0, 5);
+
+    const note = prompt('请输入版本备注：', '沉淀自当前配比参数');
+    if (note === null) return;
+
+    if (qualityBatches.length > 0) {
+      const useBatch = confirm(`发现 ${qualityBatches.length} 个同纸种的优质批次，是否选择一个作为来源？\n\n点击"确定"选择批次，"取消"使用当前配比页参数。`);
+      if (useBatch) {
+        const batchList = qualityBatches.map((b, i) => `${i + 1}. ${b.batchNo} - 质量${b.qualityLevel} - ${b.date}`).join('\n');
+        const batchIdxStr = prompt(`请选择批次编号（1-${qualityBatches.length}）：\n\n${batchList}`, '1');
+        if (batchIdxStr === null) return;
+        const batchIdx = parseInt(batchIdxStr) - 1;
+        const batch = qualityBatches[batchIdx];
+        if (batch) {
+          addRecipeVersion(r.id, note || '', batch.id);
+          alert(`已从批次 ${batch.batchNo} 沉淀为新版本`);
+          return;
+        }
+      }
+    }
+
+    addRecipeVersion(r.id, note || '');
+    alert('已添加新版本');
+  };
+
+  const getBestQualityBatch = (r: Recipe) => {
+    return batches
+      .filter((b) => b.configSnapshot.paperType === r.paperType)
+      .sort((a, b) => {
+        const score = (lvl: string) => lvl === '优' ? 4 : lvl === '良' ? 3 : lvl === '合格' ? 2 : 1;
+        return score(b.qualityLevel) - score(a.qualityLevel);
+      })[0];
   };
 
   return (
@@ -111,7 +196,7 @@ export default function RecipesPage() {
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-3xl font-bold text-ink-300">配方库</h1>
-          <p className="mt-1 text-sm text-ink-100">保存成熟的抄造方案为配方，一键载入到配比页，稳定输出品质</p>
+          <p className="mt-1 text-sm text-ink-100">保存成熟的抄造方案为配方，支持多版本管理，一键载入稳定输出品质</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative">
@@ -124,6 +209,28 @@ export default function RecipesPage() {
           <Button icon={<Plus className="h-4 w-4" />} onClick={startNew}>保存当前参数为配方</Button>
         </div>
       </header>
+
+      <div className="flex flex-wrap gap-2">
+        {FILTER_OPTIONS.map((opt) => {
+          const Icon = opt.icon;
+          const active = recipeFilter === opt.value;
+          return (
+            <button
+              key={opt.value}
+              onClick={() => setRecipeFilter(opt.value)}
+              className={[
+                'flex items-center gap-2 rounded-lg border-2 px-4 py-2 text-sm font-medium transition-all',
+                active
+                  ? 'border-bronze-500 bg-bronze-50 text-bronze-700 shadow-sm'
+                  : 'border-bronze-200 bg-white/60 text-ink-200 hover:border-bronze-300 hover:bg-white',
+              ].join(' ')}
+            >
+              <Icon className="h-4 w-4" />
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
         <div className="xl:col-span-2">
@@ -141,10 +248,16 @@ export default function RecipesPage() {
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-1">
                 {filtered.map((r) => {
                   const active = selectedId === r.id;
+                  const isRecommended = !!r.recommendedVersionId;
+                  const lastUsed = r.lastUsedAt;
+                  const bestBatch = getBestQualityBatch(r);
                   return (
                     <button
                       key={r.id}
-                      onClick={() => setSelectedId(r.id)}
+                      onClick={() => {
+                        setSelectedId(r.id);
+                        setSelectedVersionId(null);
+                      }}
                       className={[
                         'group relative overflow-hidden rounded-xl border p-4 text-left transition-all',
                         active
@@ -152,10 +265,20 @@ export default function RecipesPage() {
                           : 'border-bronze-100 bg-white/60 hover:border-bronze-200 hover:bg-white hover:shadow-paper',
                       ].join(' ')}
                     >
+                      {isRecommended && (
+                        <div className="absolute right-2 top-2">
+                          <Badge tone="bamboo" size="sm" className="flex items-center gap-1">
+                            <Star className="h-3 w-3 fill-current" /> 推荐
+                          </Badge>
+                        </div>
+                      )}
                       <div className="mb-2 flex items-start justify-between gap-2">
                         <div>
                           <h3 className="font-display font-bold text-ink-300">{r.name}</h3>
-                          <p className="mt-0.5 text-xs text-ink-100">{r.config.paperType} · <Clock className="inline h-3 w-3" />{r.createdAt}</p>
+                          <p className="mt-0.5 text-xs text-ink-100">
+                            {r.paperType || r.config.paperType} · 
+                            <Clock className="ml-1 inline h-3 w-3" />{r.createdAt}
+                          </p>
                         </div>
                         <ChevronRight className={`h-4 w-4 transition-all ${active ? 'text-bronze-500 translate-x-0' : 'text-ink-100 group-hover:translate-x-0.5'}`} />
                       </div>
@@ -177,11 +300,24 @@ export default function RecipesPage() {
                       </div>
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         <Badge tone="bronze">{r.category}</Badge>
-                        {r.tags.slice(0, 3).map((t) => (
-                          <Badge key={t} tone="ink" className="flex items-center gap-1">
-                            <Tag className="h-2.5 w-2.5" />{t}
+                        {r.versions.length > 1 && (
+                          <Badge tone="ink" className="flex items-center gap-1">
+                            <GitBranch className="h-2.5 w-2.5" />
+                            {r.versions.length} 个版本
                           </Badge>
-                        ))}
+                        )}
+                        {lastUsed && (
+                          <Badge tone="rattan" className="flex items-center gap-1">
+                            <TrendingUp className="h-2.5 w-2.5" />
+                            最近使用
+                          </Badge>
+                        )}
+                        {bestBatch && bestBatch.qualityLevel === '优' && (
+                          <Badge tone="bamboo" className="flex items-center gap-1">
+                            <Award className="h-2.5 w-2.5" />
+                            优品级
+                          </Badge>
+                        )}
                       </div>
                     </button>
                   );
@@ -199,16 +335,27 @@ export default function RecipesPage() {
                   <div className="flex items-center gap-2">
                     <h3 className="font-display text-lg font-bold">{selected.name}</h3>
                     <Badge tone="bronze" size="md">{selected.category}</Badge>
+                    {selected.recommendedVersionId && (
+                      <Badge tone="bamboo" size="md" className="flex items-center gap-1">
+                        <Star className="h-3 w-3 fill-current" /> 推荐方案
+                      </Badge>
+                    )}
                   </div>
                   <p className="mt-0.5 text-xs font-normal text-ink-100">
-                    纤维种类 {selected.config.fiberMixture.length} · 创建时间 {selected.createdAt}
+                    纤维种类 {displayConfig.fiberMixture.length} · 
+                    {selected.lastUsedAt && <> 最近使用 <Calendar className="ml-1 inline h-3 w-3" />{selected.lastUsedAt}</>}
                   </p>
                 </div>
               }
               icon={<Sparkles className="h-5 w-5" />}
               actions={
                 <div className="flex gap-2">
-                  <Button size="sm" variant="success" icon={<Download className="h-4 w-4" />} onClick={() => handleLoad(selected)}>载入并前往配比</Button>
+                  <Button size="sm" variant="secondary" icon={<GitBranch className="h-4 w-4" />} onClick={() => handleAddVersion(selected)}>
+                    沉淀新版本
+                  </Button>
+                  <Button size="sm" variant="success" icon={<Download className="h-4 w-4" />} onClick={() => handleLoad(selected, activeVersionId)}>
+                    载入此版本到配比
+                  </Button>
                   <Button size="sm" variant="secondary" icon={<Edit2 className="h-4 w-4" />} onClick={() => startEdit(selected)}>编辑</Button>
                   <Button size="sm" variant="ghost" className="text-cinnabar-400" icon={<Trash2 className="h-4 w-4" />} onClick={() => {
                     if (confirm(`删除配方「${selected.name}」?`)) {
@@ -219,8 +366,79 @@ export default function RecipesPage() {
                 </div>
               }
             >
+              {versions.length > 1 && (
+                <div className="mb-5 rounded-xl border border-bronze-100 bg-bronze-50/50 p-4">
+                  <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink-200">
+                    <GitBranch className="h-4 w-4" /> 版本管理
+                    <span className="ml-1 text-xs font-normal text-ink-100">（共 {versions.length} 个版本）</span>
+                  </h4>
+                  <div className="space-y-2">
+                    {versions.map((v) => {
+                      const isActive = v.id === activeVersionId;
+                      const isRecommended = v.id === selected.recommendedVersionId;
+                      const refBatch = v.qualityRefBatchId ? batches.find((b) => b.id === v.qualityRefBatchId) : null;
+                      return (
+                        <div
+                          key={v.id}
+                          className={[
+                            'flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3 transition-all',
+                            isActive
+                              ? 'border-bronze-400 bg-white shadow-sm'
+                              : 'border-bronze-100 bg-white/50 hover:border-bronze-200',
+                          ].join(' ')}
+                        >
+                          <button
+                            onClick={() => setSelectedVersionId(v.id)}
+                            className="flex flex-1 items-center gap-3 text-left"
+                          >
+                            <div className={[
+                              'flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold',
+                              isRecommended ? 'bg-bamboo-100 text-bamboo-600' : 'bg-bronze-100 text-bronze-600',
+                            ].join(' ')}>
+                              {isRecommended && <Star className="h-3.5 w-3.5 fill-current" />}
+                              {!isRecommended && v.version.replace('v', '')}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-display font-semibold text-ink-300">{v.version}</span>
+                                {isRecommended && <Badge tone="bamboo" size="sm">推荐版本</Badge>}
+                                {refBatch && <Badge tone="bronze" size="sm">来自 {refBatch.batchNo}</Badge>}
+                              </div>
+                              <div className="mt-0.5 flex items-center gap-2 text-xs text-ink-100">
+                                <Calendar className="h-3 w-3" />
+                                {v.createdAt}
+                                {v.note && <span className="ml-1">· {v.note}</span>}
+                              </div>
+                            </div>
+                          </button>
+                          <div className="flex items-center gap-2">
+                            {!isRecommended && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                icon={<Star className="h-3.5 w-3.5" />}
+                                onClick={() => handleSetRecommended(selected, v.id)}
+                              >
+                                设为推荐
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant={isActive ? 'success' : 'secondary'}
+                              onClick={() => handleLoad(selected, v.id)}
+                            >
+                              载入
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-4 gap-3">
-                <MetricDisplay label="目标克重" value={selected.config.targetGrammage} unit="g/m²" tone="highlight" icon={<Target className="h-3.5 w-3.5" />} />
+                <MetricDisplay label="目标克重" value={displayConfig.targetGrammage} unit="g/m²" tone="highlight" icon={<Target className="h-3.5 w-3.5" />} />
                 <MetricDisplay label="成纸面积" value={ratio?.area_m2 ?? '—'} unit="m²" />
                 <MetricDisplay label="预计绝干浆" value={ratio?.dryPulpWeight_g ?? '—'} unit="g" tone="highlight" icon={<Beaker className="h-3.5 w-3.5" />} />
                 <MetricDisplay label="荡料次数" value={ratio?.swingCount ?? '—'} unit="次" tone="success" />
@@ -232,16 +450,16 @@ export default function RecipesPage() {
                     <Scale className="h-4 w-4" /> 配方核心参数
                   </h4>
                   <div className="space-y-2 rounded-lg border border-bronze-100 bg-white/50 p-3 text-xs">
-                    <Row k="纸张用途" v={selected.config.paperUse} />
-                    <Row k="目标厚度" v={`${selected.config.targetThickness_um} μm`} />
-                    <Row k="幅面尺寸" v={`${selected.config.targetWidth_mm} × ${selected.config.targetHeight_mm} mm`} />
-                    <Row k="打浆度" v={`${selected.config.beatingDegree_SR}°SR`} />
-                    <Row k="用水量" v={`${selected.config.waterVolume_L} L`} />
-                    <Row k="每次入帘浆量" v={`${selected.config.perSwingVolume_mL} mL`} />
-                    <Row k="纸药种类" v={sizingAgents.find((s) => s.id === selected.config.sizingAgentId)?.name || '未设定'} />
-                    <Row k="纸药用量" v={`${selected.config.sizingDose_pct}% (绝干浆计)`} />
-                    <Row k="压榨" v={`${selected.config.pressPressure_kg}kg / ${selected.config.pressDuration_min}min`} />
-                    <Row k="晒纸温度" v={`${selected.config.dryingTemp_C} °C`} />
+                    <Row k="纸张用途" v={displayConfig.paperUse} />
+                    <Row k="目标厚度" v={`${displayConfig.targetThickness_um} μm`} />
+                    <Row k="幅面尺寸" v={`${displayConfig.targetWidth_mm} × ${displayConfig.targetHeight_mm} mm`} />
+                    <Row k="打浆度" v={`${displayConfig.beatingDegree_SR}°SR`} />
+                    <Row k="用水量" v={`${displayConfig.waterVolume_L} L`} />
+                    <Row k="每次入帘浆量" v={`${displayConfig.perSwingVolume_mL} mL`} />
+                    <Row k="纸药种类" v={sizingAgents.find((s) => s.id === displayConfig.sizingAgentId)?.name || '未设定'} />
+                    <Row k="纸药用量" v={`${displayConfig.sizingDose_pct}% (绝干浆计)`} />
+                    <Row k="压榨" v={`${displayConfig.pressPressure_kg}kg / ${displayConfig.pressDuration_min}min`} />
+                    <Row k="晒纸温度" v={`${displayConfig.dryingTemp_C} °C`} />
                   </div>
                   {selected.note && (
                     <div className="mt-3 rounded-lg border border-bronze-100 bg-rattan-100/40 p-3 text-xs text-ink-200">
@@ -254,7 +472,7 @@ export default function RecipesPage() {
                   <div>
                     <h4 className="mb-3 text-sm font-semibold text-ink-200">纤维配比</h4>
                     <div className="space-y-2">
-                      {selected.config.fiberMixture.map((m) => {
+                      {displayConfig.fiberMixture.map((m) => {
                         const f = fibers.find((x) => x.id === m.fiberId);
                         return (
                           <div key={m.fiberId}>
@@ -332,7 +550,7 @@ export default function RecipesPage() {
                 <Field label="分类">
                   <Select value={editing.category} onChange={(e) => setEditing({ ...editing, category: e.target.value })}>
                     {['书画纸', '印刷纸', '包装用纸', '工艺用纸', '文房日常', '修复用纸', '自定义配方'].map((c) => (
-                      <option key={c} selected={c === editing.category}>{c}</option>
+                      <option key={c}>{c}</option>
                     ))}
                   </Select>
                 </Field>

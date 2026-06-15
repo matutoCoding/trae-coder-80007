@@ -2,10 +2,11 @@ import { useMemo } from 'react';
 import {
   Layers, AlertTriangle, AlertCircle, Save, RefreshCw, Grid2x2, Grid3x3,
   Gauge, TrendingUp, TrendingDown, ShieldAlert, Info, CheckCircle2,
+  Scroll, Clock, PenLine, Hand, Paperclip, Sun, BookOpen,
 } from 'lucide-react';
 import PaperCard from '@/components/layout/PaperCard';
 import Button from '@/components/ui/Button';
-import Field, { TextInput, Select } from '@/components/ui/Field';
+import Field, { TextInput, Select, Textarea } from '@/components/ui/Field';
 import ProgressBar, { Badge } from '@/components/ui/ProgressBar';
 import MetricDisplay from '@/components/ui/MetricDisplay';
 import { usePaperStore } from '@/store/paperStore';
@@ -14,7 +15,7 @@ import {
   detectDeviation, computeStats, uniformityLevel, qualityLevel,
   generateWarnings, assessReleaseRisk,
 } from '@/utils/thickness';
-import type { Batch } from '@/types';
+import type { Batch, PapermakingRecord } from '@/types';
 
 const ZONE_LABELS_3x3 = [
   ['上左', '上中', '上右'],
@@ -26,6 +27,20 @@ const ZONE_LABELS_4x4 = [
   ['2-1', '2-2', '2-3', '2-4'],
   ['3-1', '3-2', '3-3', '3-4'],
   ['4-1', '4-2', '4-3', '4-4'],
+];
+
+const FEEL_OPTIONS: Array<{ value: PapermakingRecord['feelLevel']; label: string; desc: string }> = [
+  { value: '极佳', label: '极佳', desc: '纤维悬浮均匀，入帘如行云流水' },
+  { value: '良好', label: '良好', desc: '浆流平稳，手感顺畅' },
+  { value: '一般', label: '一般', desc: '略有滞感，需调整节奏' },
+  { value: '较差', label: '较差', desc: '浆体不稳，入帘有阻滞' },
+];
+
+const RELEASE_OPTIONS: Array<{ value: PapermakingRecord['releaseSituation']; label: string; desc: string }> = [
+  { value: '顺畅', label: '顺畅', desc: '揭纸如脱茧，完整无损' },
+  { value: '微阻', label: '微阻', desc: '略有粘连，小心可揭' },
+  { value: '粘连', label: '粘连', desc: '需缓慢揭起，局部有破损' },
+  { value: '破损', label: '破损', desc: '纸张易碎，揭纸困难' },
 ];
 
 export default function ThicknessPage() {
@@ -41,6 +56,9 @@ export default function ThicknessPage() {
   const sizingAgents = usePaperStore((s) => s.sizingAgents);
   const saveBatch = usePaperStore((s) => s.saveBatch);
   const recipes = usePaperStore((s) => s.recipes);
+  const payload = usePaperStore((s) => s.ratioToThicknessPayload);
+  const papermakingRecord = usePaperStore((s) => s.papermakingRecord);
+  const setPapermakingRecord = usePaperStore((s) => s.setPapermakingRecord);
 
   const target = config.targetGrammage;
   const ratio = useMemo(() => calcRatio({ config, fibers, sizingAgents }), [config, fibers, sizingAgents]);
@@ -98,6 +116,7 @@ export default function ThicknessPage() {
       gridSize,
       tolerance_pct: tolerance,
       targetGrammage: target,
+      targetSwingCount: payload?.swingCount || ratio?.swingCount || 0,
       actualAvgGrammage: stats.mean,
       actualThickness_um: Math.round((stats.mean / target) * config.targetThickness_um) || 0,
       uniformityCV_pct: stats.cv,
@@ -108,12 +127,25 @@ export default function ThicknessPage() {
       warnings,
       operator: '当班工匠',
       note: '',
+      papermakingRecord: { ...papermakingRecord },
     };
     saveBatch(batch);
-    alert('批次已归档，工艺档案已生成');
+    alert('批次已归档，工艺档案已生成（含抄造过程记录）');
   };
 
   const labels = gridSize === 3 ? ZONE_LABELS_3x3 : ZONE_LABELS_4x4;
+  const displayPayload = payload || (ratio ? {
+    paperType: config.paperType,
+    targetGrammage: target,
+    targetWidth_mm: config.targetWidth_mm,
+    targetHeight_mm: config.targetHeight_mm,
+    swingCount: ratio.swingCount,
+    pulpConcentration_pct: ratio.pulpConcentration_pct,
+    sizingAgentName: sizingAgents.find((s) => s.id === config.sizingAgentId)?.name || '未设定',
+    sizingDose_pct: config.sizingDose_pct,
+    beatingDegree_SR: config.beatingDegree_SR,
+    timestamp: new Date().toISOString(),
+  } : null);
 
   return (
     <div className="space-y-6">
@@ -128,6 +160,50 @@ export default function ThicknessPage() {
           <Button variant="success" icon={<Save className="h-4 w-4" />} onClick={handleSaveBatch}>归档为工艺档案</Button>
         </div>
       </header>
+
+      {displayPayload && (
+        <PaperCard
+          title="本次抄造任务"
+          subtitle={payload ? '来自纸浆配比计算' : '当前配比设置'}
+          icon={<BookOpen className="h-5 w-5" />}
+        >
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-6">
+            <div className="rounded-lg bg-bronze-50/80 p-3">
+              <div className="text-xs text-ink-100">纸种</div>
+              <div className="mt-0.5 font-display text-lg font-bold text-bronze-600">{displayPayload.paperType}</div>
+            </div>
+            <div className="rounded-lg bg-bronze-50/80 p-3">
+              <div className="text-xs text-ink-100">目标克重</div>
+              <div className="mt-0.5 font-display text-lg font-bold text-ink-300 tabular-nums">{displayPayload.targetGrammage} g/m²</div>
+            </div>
+            <div className="rounded-lg bg-bronze-50/80 p-3">
+              <div className="text-xs text-ink-100">幅面</div>
+              <div className="mt-0.5 font-display text-lg font-bold text-ink-300 tabular-nums">
+                {displayPayload.targetWidth_mm}×{displayPayload.targetHeight_mm} mm
+              </div>
+            </div>
+            <div className="rounded-lg bg-bamboo-50/80 p-3">
+              <div className="text-xs text-ink-100">荡料次数</div>
+              <div className="mt-0.5 font-display text-lg font-bold text-bamboo-600 tabular-nums">{displayPayload.swingCount} 次</div>
+            </div>
+            <div className="rounded-lg bg-bamboo-50/80 p-3">
+              <div className="text-xs text-ink-100">纸浆浓度</div>
+              <div className="mt-0.5 font-display text-lg font-bold text-bamboo-600 tabular-nums">{displayPayload.pulpConcentration_pct.toFixed(2)}%</div>
+            </div>
+            <div className="rounded-lg bg-rattan-50/80 p-3">
+              <div className="text-xs text-ink-100">打浆度</div>
+              <div className="mt-0.5 font-display text-lg font-bold text-rattan-600 tabular-nums">{displayPayload.beatingDegree_SR}°SR</div>
+            </div>
+          </div>
+          {payload && (
+            <div className="mt-3 flex items-center gap-2 text-xs text-ink-100">
+              <Clock className="h-3.5 w-3.5" />
+              <span>配比计算时间：{new Date(payload.timestamp).toLocaleString('zh-CN')}</span>
+              <Badge tone="bronze" className="ml-2">来自配比页</Badge>
+            </div>
+          )}
+        </PaperCard>
+      )}
 
       {warnings.length > 0 && (
         <div className="animate-pulse-warn overflow-hidden rounded-xl border-2 border-cinnabar-300 bg-gradient-to-r from-cinnabar-100/80 to-cinnabar-100/50 p-5">
@@ -280,93 +356,274 @@ export default function ThicknessPage() {
               </div>
             </div>
           </PaperCard>
+
+          <PaperCard
+            title="抄造过程记录"
+            subtitle="记录实际操作细节，归档后可完整回看工艺流程"
+            icon={<Scroll className="h-5 w-5" />}
+          >
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+              <div className="space-y-4 md:col-span-2">
+                <div className="flex items-center gap-3 border-b border-bronze-100 pb-3">
+                  <div className="rounded-full bg-bronze-100 p-2">
+                    <Hand className="h-4 w-4 text-bronze-500" />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-semibold text-ink-300">入帘荡料</h3>
+                    <p className="text-xs text-ink-100">记录荡料与搅浆实际操作</p>
+                  </div>
+                </div>
+              </div>
+
+              <Field label="实际荡料次数" hint="与目标次数对比">
+                <TextInput
+                  type="number"
+                  value={papermakingRecord.actualSwingCount || ''}
+                  onChange={(e) => setPapermakingRecord({ actualSwingCount: parseInt(e.target.value) || 0 })}
+                  placeholder={String(payload?.swingCount || ratio?.swingCount || 0)}
+                />
+              </Field>
+
+              <Field label="搅浆次数" hint="每次入帘前的搅拌次数">
+                <TextInput
+                  type="number"
+                  value={papermakingRecord.stirCount || ''}
+                  onChange={(e) => setPapermakingRecord({ stirCount: parseInt(e.target.value) || 0 })}
+                  placeholder="如 15"
+                />
+              </Field>
+
+              <Field label="入帘手感" hint="浆料在竹帘上的流动手感">
+                <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                  {FEEL_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setPapermakingRecord({ feelLevel: opt.value })}
+                      className={[
+                        'rounded-lg border-2 p-3 text-left transition-all hover:border-bronze-300',
+                        papermakingRecord.feelLevel === opt.value
+                          ? 'border-bronze-500 bg-bronze-50 shadow-sm'
+                          : 'border-bronze-200 bg-white/60',
+                      ].join(' ')}
+                    >
+                      <div className={[
+                        'font-display text-sm font-semibold',
+                        papermakingRecord.feelLevel === opt.value ? 'text-bronze-600' : 'text-ink-200',
+                      ].join(' ')}>{opt.label}</div>
+                      <div className="mt-1 text-[10px] text-ink-100">{opt.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </Field>
+
+              <Field label="手感备注">
+                <Textarea
+                  value={papermakingRecord.feelNote || ''}
+                  onChange={(e) => setPapermakingRecord({ feelNote: e.target.value })}
+                  placeholder="如：浆料稍稠，荡料时需略加速..."
+                  rows={2}
+                />
+              </Field>
+
+              <div className="space-y-4 md:col-span-2">
+                <div className="flex items-center gap-3 border-b border-bronze-100 pb-3 pt-2">
+                  <div className="rounded-full bg-rattan-100 p-2">
+                    <Paperclip className="h-4 w-4 text-rattan-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-semibold text-ink-300">揭纸情况</h3>
+                    <p className="text-xs text-ink-100">湿纸从帘面揭下的完整度</p>
+                  </div>
+                </div>
+              </div>
+
+              <Field label="揭纸情况" hint="湿纸完整度评估" className="md:col-span-2">
+                <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                  {RELEASE_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setPapermakingRecord({ releaseSituation: opt.value })}
+                      className={[
+                        'rounded-lg border-2 p-3 text-left transition-all hover:border-bronze-300',
+                        papermakingRecord.releaseSituation === opt.value
+                          ? 'border-rattan-500 bg-rattan-50 shadow-sm'
+                          : 'border-bronze-200 bg-white/60',
+                      ].join(' ')}
+                    >
+                      <div className={[
+                        'font-display text-sm font-semibold',
+                        papermakingRecord.releaseSituation === opt.value ? 'text-rattan-700' : 'text-ink-200',
+                      ].join(' ')}>{opt.label}</div>
+                      <div className="mt-1 text-[10px] text-ink-100">{opt.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </Field>
+
+              <Field label="揭纸备注" className="md:col-span-2">
+                <Textarea
+                  value={papermakingRecord.releaseNote || ''}
+                  onChange={(e) => setPapermakingRecord({ releaseNote: e.target.value })}
+                  placeholder="如：左下角略有粘连，揭起时小心处理..."
+                  rows={2}
+                />
+              </Field>
+
+              <div className="space-y-4 md:col-span-2">
+                <div className="flex items-center gap-3 border-b border-bronze-100 pb-3 pt-2">
+                  <div className="rounded-full bg-bamboo-100 p-2">
+                    <Sun className="h-4 w-4 text-bamboo-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-semibold text-ink-300">后工序备注</h3>
+                    <p className="text-xs text-ink-100">压榨与晒纸的特殊记录</p>
+                  </div>
+                </div>
+              </div>
+
+              <Field label="压榨备注">
+                <Textarea
+                  value={papermakingRecord.pressNote || ''}
+                  onChange={(e) => setPapermakingRecord({ pressNote: e.target.value })}
+                  placeholder="如：压榨压力适中，控水良好..."
+                  rows={2}
+                />
+              </Field>
+
+              <Field label="晒纸备注">
+                <Textarea
+                  value={papermakingRecord.dryingNote || ''}
+                  onChange={(e) => setPapermakingRecord({ dryingNote: e.target.value })}
+                  placeholder="如：阴干，避免直射，收缩率约3%..."
+                  rows={2}
+                />
+              </Field>
+
+              <Field label="抄造开始时间">
+                <TextInput
+                  type="datetime-local"
+                  value={papermakingRecord.startTime || ''}
+                  onChange={(e) => setPapermakingRecord({ startTime: e.target.value })}
+                />
+              </Field>
+
+              <Field label="抄造结束时间">
+                <TextInput
+                  type="datetime-local"
+                  value={papermakingRecord.endTime || ''}
+                  onChange={(e) => setPapermakingRecord({ endTime: e.target.value })}
+                />
+              </Field>
+            </div>
+          </PaperCard>
         </div>
 
         <div className="space-y-6 xl:col-span-2">
-          <PaperCard title="统计摘要" subtitle={`已录入 ${stats.count}/${gridSize * gridSize} 个样本`} icon={<Gauge className="h-5 w-5" />}>
-            <div className="grid grid-cols-2 gap-3">
-              <MetricDisplay label="平均克重" value={stats.mean || '—'} unit="g/m²" tone={Math.abs(stats.mean - target) <= tolerance * target / 100 ? 'success' : 'warn'} />
-              <MetricDisplay label="目标克重" value={target} unit="g/m²" />
-              <MetricDisplay label="变异系数 CV" value={stats.cv || '—'} unit="%" tone={uLevel === '优' ? 'success' : uLevel === '良' ? 'highlight' : uLevel === '合格' ? 'warn' : 'danger'} hint={`匀度：${uLevel}`} />
-              <MetricDisplay label="最大偏差" value={maxDev ? maxDev.toFixed(1) : '—'} unit="%" tone={maxDev > tolerance ? 'danger' : 'success'} />
-            </div>
+          <div className="grid grid-cols-2 gap-3">
+            <MetricDisplay
+              label="平均克重"
+              value={stats.count ? `${stats.mean.toFixed(1)} g/m²` : '—'}
+              hint={stats.count ? `目标 ${target}` : '需录入数据'}
+              tone={stats.count && Math.abs(stats.mean - target) <= target * tolerance / 100 ? 'success' : 'warn'}
+            />
+            <MetricDisplay
+              label="变异系数 CV"
+              value={stats.count ? `${stats.cv.toFixed(2)}%` : '—'}
+              hint={uLevel}
+              tone={stats.cv < 5 ? 'success' : stats.cv < 10 ? 'warn' : 'danger'}
+            />
+            <MetricDisplay
+              label="最大偏差"
+              value={stats.count ? `${maxDev.toFixed(1)}%` : '—'}
+              hint={`公差 ±${tolerance}%`}
+              tone={maxDev <= tolerance ? 'success' : maxDev <= tolerance * 1.2 ? 'warn' : 'danger'}
+            />
+            <MetricDisplay
+              label="质量等级"
+              value={qLevel || '—'}
+              hint={stats.count ? `${stats.count} 个测点` : '需录入数据'}
+              tone={qLevel === '优' ? 'success' : qLevel === '良' ? 'warn' : 'danger'}
+            />
+          </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <div className="rounded-lg border border-bronze-100 bg-white/60 p-3">
-                <div className="text-xs text-ink-100">综合质量等级</div>
-                <div className="mt-1 flex items-center gap-2">
-                  <Badge tone={qLevel === '优' ? 'bamboo' : qLevel === '良' ? 'bronze' : qLevel === '合格' ? 'rattan' : 'cinnabar'} size="md">
-                    {qLevel}
-                  </Badge>
-                  {qLevel === '优' && <CheckCircle2 className="h-4 w-4 text-bamboo-500" />}
-                </div>
-              </div>
-              <div className="rounded-lg border border-bronze-100 bg-white/60 p-3">
-                <div className="text-xs text-ink-100">揭纸破损风险</div>
-                <div className="mt-1 flex items-center gap-2">
-                  <Badge
-                    tone={releaseRisk.level === '低' ? 'bamboo' : releaseRisk.level === '中' ? 'rattan' : 'cinnabar'}
-                    size="md"
-                  >
-                    {releaseRisk.level}风险
-                  </Badge>
-                  <span className="text-xs text-ink-100 tabular-nums">评分 {releaseRisk.score}</span>
-                </div>
-              </div>
+          <PaperCard
+            title="匀度评估"
+            icon={<Gauge className="h-5 w-5" />}
+          >
+            <div className="space-y-4">
+              <ProgressBar
+                label="均匀度评分"
+                value={stats.count ? Math.max(0, 100 - stats.cv * 5) : 0}
+                max={100}
+                variant="uniformity"
+              />
+              <ProgressBar
+                label="强度评分"
+                value={ratio?.strengthScore || 0}
+                max={100}
+                variant="strength"
+              />
+              <ProgressBar
+                label="悬浮评分"
+                value={ratio?.suspensionScore || 0}
+                max={100}
+                variant="suspension"
+              />
+              <ProgressBar
+                label="揭纸顺畅度"
+                value={ratio?.releaseScore || 0}
+                max={100}
+                variant="suspension"
+              />
             </div>
           </PaperCard>
 
-          <PaperCard title="检测指标" icon={<Info className="h-5 w-5" />}>
-            <ProgressBar label="匀度评分 (100-CV×4)" value={Math.max(0, 100 - stats.cv * 4)} variant="uniformity" />
-            <div className="h-4" />
-            <ProgressBar label="录入完成度" value={(stats.count / (gridSize * gridSize)) * 100} variant="custom" customColor="from-bronze-200 to-bronze-400" />
-            {issues.length > 0 && (
-              <div className="mt-5">
-                <div className="mb-2 text-xs font-semibold text-ink-200">质量缺陷标记</div>
-                <div className="flex flex-wrap gap-2">
-                  {issues.map((i) => (
-                    <Badge key={i} tone="cinnabar">{i}</Badge>
+          {releaseRisk && (
+            <PaperCard
+              title="揭纸风险评估"
+              icon={<ShieldAlert className="h-5 w-5" />}
+            >
+              <div className="space-y-3">
+                <div className={[
+                  'flex items-center gap-3 rounded-lg p-3',
+                  releaseRisk.level === '高' ? 'bg-cinnabar-100' : releaseRisk.level === '中' ? 'bg-rattan-100' : 'bg-bamboo-100',
+                ].join(' ')}>
+                  <AlertTriangle className={[
+                    'h-5 w-5',
+                    releaseRisk.level === '高' ? 'text-cinnabar-500' : releaseRisk.level === '中' ? 'text-rattan-600' : 'text-bamboo-600',
+                  ].join(' ')} />
+                  <div>
+                    <div className="font-display font-bold text-ink-300">风险等级：{releaseRisk.level}</div>
+                    <div className="text-xs text-ink-100">{releaseRisk.assessment}</div>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  {releaseRisk.suggestions.map((s, i) => (
+                    <div key={i} className="flex items-start gap-2 text-sm text-ink-200">
+                      <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-bronze-400" />
+                      <span>{s}</span>
+                    </div>
                   ))}
                 </div>
               </div>
-            )}
-          </PaperCard>
+            </PaperCard>
+          )}
 
-          <PaperCard title="操作建议" icon={<AlertTriangle className="h-5 w-5" />}>
-            <ul className="space-y-2 text-sm text-ink-200">
-              <li className="flex gap-2">
-                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-bamboo-400" />
-                <span><b className="text-bamboo-500">匀度优 (CV&lt;5%)</b>：可直接进入压榨晒纸工序，建议记录为本批次标准样。</span>
-              </li>
-              <li className="flex gap-2">
-                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-rattan-300" />
-                <span><b className="text-rattan-400">有薄区</b>：揭纸时用湿毛巾敷于薄区上方 10 秒，再缓慢起纸。</span>
-              </li>
-              <li className="flex gap-2">
-                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-cinnabar-400" />
-                <span><b className="text-cinnabar-400">云絮多</b>：下次抄前用竹棒顺向搅浆 30 圈，并检查纸药是否失效。</span>
-              </li>
-            </ul>
-          </PaperCard>
-
-          {ratio && (
-            <PaperCard title="关联配比信息" icon={<Grid2x2 className="h-5 w-5" />}>
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <Field label="纸张类型" className="m-0">
-                  <TextInput value={config.paperType} readOnly className="bg-rice-200/50" />
-                </Field>
-                <Field label="打浆度">
-                  <TextInput value={`${config.beatingDegree_SR}°SR`} readOnly className="bg-rice-200/50" />
-                </Field>
-                <Field label="纸药">
-                  <Select value={config.sizingAgentId} disabled>
-                    {sizingAgents.map((s) => <option key={s.id} value={s.id}>{s.name} {config.sizingDose_pct}%</option>)}
-                  </Select>
-                </Field>
-                <Field label="配方库匹配">
-                  <TextInput value={recipes.find((r) => r.name.includes(config.paperType))?.name || '未匹配'} readOnly className="bg-rice-200/50" />
-                </Field>
-              </div>
+          {issues.length > 0 && (
+            <PaperCard
+              title="检测问题归纳"
+              icon={<PenLine className="h-5 w-5" />}
+            >
+              <ul className="space-y-2 text-sm text-ink-200">
+                {issues.map((iss, i) => (
+                  <li key={i} className="flex gap-2">
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-bronze-400" />
+                    <span>{iss}</span>
+                  </li>
+                ))}
+              </ul>
             </PaperCard>
           )}
         </div>

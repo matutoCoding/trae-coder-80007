@@ -108,7 +108,25 @@ export function assessReleaseRisk(devs: DeviationInfo[], releaseScore: number | 
   let score = releaseScore ?? 70;
   if (lowCells >= 3 || score < 45) level = '高';
   else if (lowCells >= 1 || score < 60) level = '中';
-  return { level, score: round2(score) };
+
+  let assessment = '';
+  const suggestions: string[] = [];
+
+  if (level === '高') {
+    assessment = '揭纸破损风险较高，需谨慎操作';
+    suggestions.push('建议湿揭前静置3-5分钟，让纤维充分氢键结合');
+    suggestions.push('可适当增加纸药用量，提升纤维悬浮性');
+    suggestions.push('揭纸速度放慢，角度保持45度');
+  } else if (level === '中') {
+    assessment = '有一定揭纸风险，需留意操作细节';
+    suggestions.push('湿揭时注意帘面湿度均匀');
+    suggestions.push('局部偏薄区域需格外小心');
+  } else {
+    assessment = '揭纸条件良好，可正常操作';
+    suggestions.push('保持当前工艺参数即可');
+  }
+
+  return { level, score: round2(score), assessment, suggestions };
 }
 
 function zoneLabel(i: number, total: number) {

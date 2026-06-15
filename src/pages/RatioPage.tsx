@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Scale, Target, Beaker, Gauge, Droplet, Thermometer, RotateCcw, Sparkles,
   Layers, FileText, Download, AlertTriangle, CheckCircle, Wand2,
@@ -10,14 +11,19 @@ import ProgressBar, { Badge } from '@/components/ui/ProgressBar';
 import MetricDisplay from '@/components/ui/MetricDisplay';
 import { usePaperStore } from '@/store/paperStore';
 import { calcRatio, reverseRatioFromTarget } from '@/utils/calculator';
+import type { RatioToThicknessPayload } from '@/types';
 
 export default function RatioPage() {
+  const navigate = useNavigate();
   const config = usePaperStore((s) => s.ratioConfig);
   const setConfig = usePaperStore((s) => s.setRatioConfig);
   const resetConfig = usePaperStore((s) => s.resetRatioConfig);
   const fibers = usePaperStore((s) => s.fibers);
   const sizingAgents = usePaperStore((s) => s.sizingAgents);
   const addRecipe = usePaperStore((s) => s.addRecipe);
+  const setRatioToThicknessPayload = usePaperStore((s) => s.setRatioToThicknessPayload);
+  const resetPapermakingRecord = usePaperStore((s) => s.resetPapermakingRecord);
+  const resetThicknessGrid = usePaperStore((s) => s.resetThicknessGrid);
 
   const result = useMemo(
     () => calcRatio({ config, fibers, sizingAgents }),
@@ -33,7 +39,15 @@ export default function RatioPage() {
     const name = prompt('请输入配方名称：', `${config.paperType} - ${config.targetGrammage}g`);
     if (!name) return;
     const category = prompt('请输入配方分类：', '自定义配方') || '自定义配方';
-    addRecipe({ name, category, config: { ...config }, tags: ['手动保存'], note: '' });
+    addRecipe({
+      name,
+      category,
+      paperType: config.paperType,
+      config: { ...config },
+      tags: ['手动保存'],
+      note: '',
+      versions: [],
+    });
     alert('已保存到配方库');
   };
 
@@ -55,7 +69,33 @@ export default function RatioPage() {
   const totalMixRatio = config.fiberMixture.reduce((s, m) => s + (m.ratio_pct || 0), 0);
   const mixOk = Math.abs(totalMixRatio - 100) < 0.5;
 
-  const goThickness = () => window.location.hash = '#/thickness';
+  const goThickness = () => {
+    if (!result) {
+      alert('请先完善配比参数，完成计算后再跳转');
+      return;
+    }
+    const sizingAgent = sizingAgents.find((s) => s.id === config.sizingAgentId);
+    const payload: RatioToThicknessPayload = {
+      paperType: config.paperType,
+      targetGrammage: config.targetGrammage,
+      targetWidth_mm: config.targetWidth_mm,
+      targetHeight_mm: config.targetHeight_mm,
+      targetThickness_um: config.targetThickness_um,
+      paperUse: config.paperUse,
+      swingCount: result.swingCount,
+      pulpConcentration_pct: result.pulpConcentration_pct,
+      dryPulpWeight_g: result.dryPulpWeight_g,
+      sizingAgentName: sizingAgent?.name || '未设定',
+      sizingDose_pct: config.sizingDose_pct,
+      beatingDegree_SR: config.beatingDegree_SR,
+      fiberMixture: [...config.fiberMixture],
+      timestamp: new Date().toISOString(),
+    };
+    setRatioToThicknessPayload(payload);
+    resetPapermakingRecord();
+    resetThicknessGrid();
+    navigate('/thickness');
+  };
 
   return (
     <div className="space-y-6">

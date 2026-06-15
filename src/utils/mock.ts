@@ -82,64 +82,110 @@ export const defaultRatioConfig: RatioConfig = {
   dryingTemp_C: 26,
 };
 
+const recipe1Config: RatioConfig = {
+  ...defaultRatioConfig,
+  paperType: '净皮宣纸',
+  targetGrammage: 60,
+  targetWidth_mm: 690, targetHeight_mm: 1380, targetThickness_um: 85,
+  paperUse: '书画',
+  fiberMixture: [{ fiberId: 'fiber-1', ratio_pct: 70 }, { fiberId: 'fiber-2', ratio_pct: 30 }],
+  sizingAgentId: 'sz-1', sizingDose_pct: 0.7, beatingDegree_SR: 42,
+};
+const recipe2Config: RatioConfig = {
+  ...defaultRatioConfig,
+  paperType: '楮皮纸',
+  targetGrammage: 45,
+  targetWidth_mm: 600, targetHeight_mm: 900, targetThickness_um: 65,
+  paperUse: '古籍印刷',
+  fiberMixture: [{ fiberId: 'fiber-3', ratio_pct: 80 }, { fiberId: 'fiber-2', ratio_pct: 20 }],
+  sizingAgentId: 'sz-3', sizingDose_pct: 0.6, beatingDegree_SR: 38,
+};
+const recipe3Config: RatioConfig = {
+  ...defaultRatioConfig,
+  paperType: '桑皮纸',
+  targetGrammage: 85,
+  targetWidth_mm: 690, targetHeight_mm: 1380, targetThickness_um: 120,
+  paperUse: '书画',
+  fiberMixture: [{ fiberId: 'fiber-5', ratio_pct: 85 }, { fiberId: 'fiber-2', ratio_pct: 15 }],
+  sizingAgentId: 'sz-1', sizingDose_pct: 0.8, beatingDegree_SR: 35,
+};
+const recipe4Config: RatioConfig = {
+  ...defaultRatioConfig,
+  paperType: '毛边纸',
+  targetGrammage: 35,
+  targetWidth_mm: 420, targetHeight_mm: 560, targetThickness_um: 55,
+  paperUse: '书画',
+  fiberMixture: [{ fiberId: 'fiber-4', ratio_pct: 90 }, { fiberId: 'fiber-2', ratio_pct: 10 }],
+  sizingAgentId: 'sz-4', sizingDose_pct: 0.65, beatingDegree_SR: 50,
+};
+
 export const seedRecipes: Recipe[] = [
   {
     id: 'recipe-1', name: '四尺净皮书画宣', category: '书画纸',
+    paperType: '净皮宣纸',
     tags: ['经典', '书画', '宣纸'], createdAt: dt(30),
     note: '泾县传统配方，檀皮稻草搭配，适合书法与写意',
-    config: {
-      ...defaultRatioConfig,
-      paperType: '净皮宣纸',
-      targetGrammage: 60,
-      targetWidth_mm: 690, targetHeight_mm: 1380, targetThickness_um: 85,
-      paperUse: '书画',
-      fiberMixture: [{ fiberId: 'fiber-1', ratio_pct: 70 }, { fiberId: 'fiber-2', ratio_pct: 30 }],
-      sizingAgentId: 'sz-1', sizingDose_pct: 0.7, beatingDegree_SR: 42,
-    },
+    lastUsedAt: dt(3),
+    versions: [
+      {
+        id: 'v1', version: 'v1.0', config: recipe1Config,
+        note: '初始版本', createdAt: dt(30),
+      },
+    ],
+    recommendedVersionId: 'v1',
+    config: recipe1Config,
   },
   {
     id: 'recipe-2', name: '绵料古籍印刷纸', category: '印刷纸',
+    paperType: '楮皮纸',
     tags: ['古籍', '雕版', '收藏'], createdAt: dt(20),
     note: '楮皮为主，适合木版水印与线装书',
-    config: {
-      ...defaultRatioConfig,
-      paperType: '楮皮纸',
-      targetGrammage: 45,
-      targetWidth_mm: 600, targetHeight_mm: 900, targetThickness_um: 65,
-      paperUse: '古籍印刷',
-      fiberMixture: [{ fiberId: 'fiber-3', ratio_pct: 80 }, { fiberId: 'fiber-2', ratio_pct: 20 }],
-      sizingAgentId: 'sz-3', sizingDose_pct: 0.6, beatingDegree_SR: 38,
-    },
+    lastUsedAt: dt(1),
+    versions: [
+      { id: 'v2', version: 'v1.0', config: recipe2Config,
+        note: '初始版本', createdAt: dt(20) },
+    ],
+    recommendedVersionId: 'v2',
+    config: recipe2Config,
   },
   {
     id: 'recipe-3', name: '桑皮重彩工笔画纸', category: '书画纸',
+    paperType: '桑皮纸',
     tags: ['重彩', '工笔', '高档'], createdAt: dt(10),
     note: '超长桑皮纤维，耐反复渲染',
-    config: {
-      ...defaultRatioConfig,
-      paperType: '桑皮纸',
-      targetGrammage: 85,
-      targetWidth_mm: 690, targetHeight_mm: 1380, targetThickness_um: 120,
-      paperUse: '书画',
-      fiberMixture: [{ fiberId: 'fiber-5', ratio_pct: 85 }, { fiberId: 'fiber-2', ratio_pct: 15 }],
-      sizingAgentId: 'sz-1', sizingDose_pct: 0.8, beatingDegree_SR: 35,
-    },
+    versions: [
+      { id: 'v3', version: 'v1.0', config: recipe3Config,
+        note: '初始版本', createdAt: dt(10) },
+    ],
+    recommendedVersionId: 'v3',
+    config: recipe3Config,
   },
   {
     id: 'recipe-4', name: '毛竹仿毛边纸', category: '文房日常',
+    paperType: '毛边纸',
     tags: ['练习', '毛边', '竹纸'], createdAt: dt(5),
     note: '竹浆为主，适合日常练习与书信',
-    config: {
-      ...defaultRatioConfig,
-      paperType: '毛边纸',
-      targetGrammage: 35,
-      targetWidth_mm: 420, targetHeight_mm: 560, targetThickness_um: 55,
-      paperUse: '书画',
-      fiberMixture: [{ fiberId: 'fiber-4', ratio_pct: 90 }, { fiberId: 'fiber-2', ratio_pct: 10 }],
-      sizingAgentId: 'sz-4', sizingDose_pct: 0.65, beatingDegree_SR: 50,
-    },
+    versions: [
+      { id: 'v4', version: 'v1.0', config: recipe4Config,
+        note: '初始版本', createdAt: dt(5) },
+    ],
+    recommendedVersionId: 'v4',
+    config: recipe4Config,
   },
 ];
+
+export const defaultPapermakingRecord = {
+  actualSwingCount: 0,
+  feelLevel: '良好' as const,
+  feelNote: '',
+  stirCount: 0,
+  releaseSituation: '顺畅' as const,
+  releaseNote: '',
+  pressNote: '',
+  dryingNote: '',
+  startTime: '',
+  endTime: '',
+};
 
 export const seedBatches: Batch[] = [
   {
@@ -160,6 +206,19 @@ export const seedBatches: Batch[] = [
     warnings: ['下右区略偏厚 +8.3%，超出 ±8% 公差，请注意荡料手势'],
     operator: '李师傅', note: '第四批抄造，檀皮原料好，整体稳定',
     createdAt: dt(6),
+    targetSwingCount: 45,
+    papermakingRecord: {
+      actualSwingCount: 48,
+      feelLevel: '良好',
+      feelNote: '手感流畅，浆悬浮好',
+      stirCount: 25,
+      releaseSituation: '顺畅',
+      releaseNote: '湿揭完整，帘纹清晰',
+      pressNote: '常规压榨20分钟',
+      dryingNote: '自然阴干24小时',
+      startTime: '08:30',
+      endTime: '09:15',
+    },
   },
   {
     id: uid(), batchNo: 'XZ-20260612-02', recipeId: 'recipe-3', recipeSnapshot: seedRecipes[2],
@@ -182,6 +241,19 @@ export const seedBatches: Batch[] = [
     ],
     operator: '张师傅', note: '桑皮打浆时间略短，絮聚问题下次调整',
     createdAt: dt(4),
+    targetSwingCount: 62,
+    papermakingRecord: {
+      actualSwingCount: 65,
+      feelLevel: '一般',
+      feelNote: '浆稍稠，荡料有阻力',
+      stirCount: 18,
+      releaseSituation: '微阻',
+      releaseNote: '下左区有轻微黏连，略有破损',
+      pressNote: '加压至40kg',
+      dryingNote: '烘房35度12小时',
+      startTime: '10:15',
+      endTime: '11:20',
+    },
   },
   {
     id: uid(), batchNo: 'XZ-20260615-03', recipeId: 'recipe-2', recipeSnapshot: seedRecipes[1],
@@ -201,5 +273,18 @@ export const seedBatches: Batch[] = [
     warnings: [],
     operator: '王师傅', note: '楮皮配方完美，可推广为标准工艺',
     createdAt: dt(1),
+    targetSwingCount: 38,
+    papermakingRecord: {
+      actualSwingCount: 38,
+      feelLevel: '极佳',
+      feelNote: '悬浮极佳，荡料如行云流水',
+      stirCount: 30,
+      releaseSituation: '顺畅',
+      releaseNote: '整张揭下，边缘完整',
+      pressNote: '30kg轻压15分钟',
+      dryingNote: '阴干18小时',
+      startTime: '09:00',
+      endTime: '09:40',
+    },
   },
 ];

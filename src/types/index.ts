@@ -45,18 +45,40 @@ export interface RatioConfig {
   dryingTemp_C: number;
 }
 
+export interface RecipeVersion {
+  id: string;
+  version: string;
+  config: RatioConfig;
+  note: string;
+  createdAt: string;
+  qualityRefBatchId?: string;
+}
+
 export interface Recipe {
   id: string;
   name: string;
   category: string;
+  paperType: string;
   config: RatioConfig;
   tags: string[];
   createdAt: string;
   note: string;
+  recommendedVersionId?: string;
+  versions: RecipeVersion[];
+  lastUsedAt?: string;
 }
 
-export interface ThicknessCellValue {
-  value: number | null;
+export interface PapermakingRecord {
+  actualSwingCount: number;
+  feelLevel: '极佳' | '良好' | '一般' | '较差';
+  feelNote: string;
+  stirCount: number;
+  releaseSituation: '顺畅' | '微阻' | '粘连' | '破损';
+  releaseNote: string;
+  pressNote: string;
+  dryingNote: string;
+  startTime: string;
+  endTime: string;
 }
 
 export interface Batch {
@@ -81,6 +103,29 @@ export interface Batch {
   operator: string;
   note: string;
   createdAt: string;
+  papermakingRecord?: PapermakingRecord;
+  targetSwingCount: number;
+}
+
+export interface RatioToThicknessPayload {
+  paperType: string;
+  targetGrammage: number;
+  targetWidth_mm: number;
+  targetHeight_mm: number;
+  targetThickness_um: number;
+  paperUse: string;
+  swingCount: number;
+  pulpConcentration_pct: number;
+  dryPulpWeight_g: number;
+  sizingAgentName: string;
+  sizingDose_pct: number;
+  beatingDegree_SR: number;
+  fiberMixture: FiberMixItem[];
+  timestamp: string;
+}
+
+export interface CompareSelection {
+  batchIds: string[];
 }
 
 export interface RatioResult {
