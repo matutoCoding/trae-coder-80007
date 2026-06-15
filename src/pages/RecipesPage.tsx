@@ -3,6 +3,7 @@ import {
   BookOpen, Search, Tag, Plus, X, Trash2, Edit2, Download,
   Sparkles, Target, Scale, Beaker, Clock, ChevronRight,
   Star, GitBranch, Calendar, TrendingUp, Award,
+  FileText, CheckCircle, AlertTriangle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import PaperCard from '@/components/layout/PaperCard';
@@ -12,7 +13,7 @@ import ProgressBar, { Badge } from '@/components/ui/ProgressBar';
 import MetricDisplay from '@/components/ui/MetricDisplay';
 import { usePaperStore } from '@/store/paperStore';
 import { calcRatio } from '@/utils/calculator';
-import type { Recipe, RecipeVersion } from '@/types';
+import type { Recipe, RecipeVersion, Batch } from '@/types';
 
 interface EditingRecipe {
   id?: string;
@@ -22,14 +23,19 @@ interface EditingRecipe {
   tags: string[];
 }
 
-type FilterType = 'all' | 'recommended' | 'recent' | 'quality';
+type FilterType = 'all' | 'recommended' | 'recent' | 'quality_you' | 'quality_liang' | 'quality_hege' | 'quality_buhege';
 
-const FILTER_OPTIONS: Array<{ value: FilterType; label: string; icon: typeof Star }> = [
-  { value: 'all', label: '全部', icon: BookOpen },
-  { value: 'recommended', label: '推荐方案', icon: Star },
-  { value: 'recent', label: '最近使用', icon: Clock },
-  { value: 'quality', label: '质量优先', icon: Award },
+const FILTER_OPTIONS: Array<{ value: FilterType; label: string; icon: typeof Star; tone: any }> = [
+  { value: 'all', label: '全部', icon: BookOpen, tone: 'ink' },
+  { value: 'recommended', label: '★ 推荐方案', icon: Star, tone: 'bamboo' },
+  { value: 'recent', label: '最近使用', icon: Clock, tone: 'rattan' },
+  { value: 'quality_you', label: '● 优', icon: Award, tone: 'bamboo' },
+  { value: 'quality_liang', label: '● 良', icon: Award, tone: 'bronze' },
+  { value: 'quality_hege', label: '● 合格', icon: Award, tone: 'rattan' },
+  { value: 'quality_buhege', label: '● 不合格', icon: AlertTriangle, tone: 'cinnabar' },
 ];
+
+const QUALITY_SCORE: Record<string, number> = { '优': 4, '良': 3, '合格': 2, '不合格': 1 };
 
 export default function RecipesPage() {
   const recipes = usePaperStore((s) => s.recipes);
@@ -60,6 +66,13 @@ export default function RecipesPage() {
     return ['全部', ...Array.from(set)];
   }, [recipes]);
 
+  const getBestQuality = (r: Recipe): string | null => {
+    const paperBatches = batches.filter((b) => b.configSnapshot.paperType === r.paperType);
+    if (paperBatches.length === 0) return null;
+    const score = (lvl: string) => QUALITY_SCORE[lvl] || 0;
+    return paperBatches.sort((a, b) => score(b.qualityLevel) - score(a.qualityLevel))[0].qualityLevel;
+  };
+
   const filtered = useMemo(() => {
     let list = [...recipes];
 
@@ -81,16 +94,22 @@ export default function RecipesPage() {
       list = list
         .filter((r) => r.lastUsedAt)
         .sort((a, b) => new Date(b.lastUsedAt || '').getTime() - new Date(a.lastUsedAt || '').getTime());
-    } else if (recipeFilter === 'quality') {
-      list = list.sort((a, b) => {
-        const aVersions = a.versions || [];
-        const bVersions = b.versions || [];
-        return bVersions.length - aVersions.length;
+    } else if (recipeFilter.startsWith('quality_')) {
+      const levelMap: Record<string, string> = {
+        quality_you: '优',
+        quality_liang: '良',
+        quality_hege: '合格',
+        quality_buhege: '不合格',
+      };
+      const targetLevel = levelMap[recipeFilter];
+      list = list.filter((r) => {
+        const best = getBestQuality(r);
+        return best === targetLevel;
       });
     }
 
     return list;
-  }, [recipes, kw, catFilter, recipeFilter]);
+  }, [recipes, kw, catFilter, recipeFilter, batches]);
 
   const selected = recipes.find((r) => r.id === selectedId) || null;
   const versions = selected?.versions || [];
@@ -151,44 +170,73 @@ export default function RecipesPage() {
 
   const handleSetRecommended = (r: Recipe, versionId: string) => {
     setRecommendedVersion(r.id, versionId);
-    alert('已设为推荐版本');
   };
 
   const handleAddVersion = (r: Recipe) => {
     const qualityBatches = batches
-      .filter((b) => b.configSnapshot.paperType === r.paperType && b.qualityLevel === '优')
+      .filter((b) => b.configSnapshot.paperType === r.paperType)
+      .sort((a, b) => (QUALITY_SCORE[b.qualityLevel] || 0) - (QUALITY_SCORE[a.qualityLevel] || 0))
       .slice(0, 5);
 
     const note = prompt('请输入版本备注：', '沉淀自当前配比参数');
     if (note === null) return;
 
     if (qualityBatches.length > 0) {
-      const useBatch = confirm(`发现 ${qualityBatches.length} 个同纸种的优质批次，是否选择一个作为来源？\n\n点击"确定"选择批次，"取消"使用当前配比页参数。`);
+      const useBatch = confirm(`发现 ${qualityBatches.length} 个同纸种批次，是否选择一个作为来源？\n\n点击"确定"选择批次，"取消"使用当前配比页参数。`);
       if (useBatch) {
-        const batchList = qualityBatches.map((b, i) => `${i + 1}. ${b.batchNo} - 质量${b.qualityLevel} - ${b.date}`).join('\n');
+        const batchList = qualityBatches.map((b, i) => `${i + 1}. ${b.batchNo} - 质量${b.qualityLevel} - ${b.date} - 平均CV ${b.uniformityCV_pct.toFixed(1)}%`).join('\n');
         const batchIdxStr = prompt(`请选择批次编号（1-${qualityBatches.length}）：\n\n${batchList}`, '1');
         if (batchIdxStr === null) return;
         const batchIdx = parseInt(batchIdxStr) - 1;
         const batch = qualityBatches[batchIdx];
         if (batch) {
           addRecipeVersion(r.id, note || '', batch.id);
-          alert(`已从批次 ${batch.batchNo} 沉淀为新版本`);
           return;
         }
       }
     }
 
     addRecipeVersion(r.id, note || '');
-    alert('已添加新版本');
   };
 
   const getBestQualityBatch = (r: Recipe) => {
     return batches
       .filter((b) => b.configSnapshot.paperType === r.paperType)
-      .sort((a, b) => {
-        const score = (lvl: string) => lvl === '优' ? 4 : lvl === '良' ? 3 : lvl === '合格' ? 2 : 1;
-        return score(b.qualityLevel) - score(a.qualityLevel);
-      })[0];
+      .sort((a, b) => (QUALITY_SCORE[b.qualityLevel] || 0) - (QUALITY_SCORE[a.qualityLevel] || 0))[0];
+  };
+
+  const getVersionStats = (version: RecipeVersion, recipePaperType: string) => {
+    const directBatch = version.qualityRefBatchId ? batches.find((b) => b.id === version.qualityRefBatchId) : null;
+    const versionBatches: Batch[] = [];
+    if (directBatch) versionBatches.push(directBatch);
+
+    batches.forEach((b) => {
+      if (b.configSnapshot.paperType !== recipePaperType) return;
+      if (directBatch && b.id === directBatch.id) return;
+      const same = isSameConfig(b.configSnapshot, version.config);
+      if (same) versionBatches.push(b);
+    });
+
+    if (versionBatches.length === 0) {
+      return null;
+    }
+
+    const avgQuality = versionBatches.reduce((s, b) => s + (QUALITY_SCORE[b.qualityLevel] || 0), 0) / versionBatches.length;
+    const avgCV = versionBatches.reduce((s, b) => s + b.uniformityCV_pct, 0) / versionBatches.length;
+    const avgGramDev = versionBatches.reduce((s, b) => s + Math.abs(b.actualAvgGrammage - b.targetGrammage) / b.targetGrammage * 100, 0) / versionBatches.length;
+    const avgLevel = avgQuality >= 3.5 ? '优' : avgQuality >= 2.5 ? '良' : avgQuality >= 1.5 ? '合格' : '不合格';
+    const sortedBatches = [...versionBatches].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const lastUsed = sortedBatches[0];
+
+    return {
+      batchCount: versionBatches.length,
+      batches: sortedBatches,
+      avgQuality,
+      avgLevel,
+      avgCV,
+      avgGramDev,
+      lastUsedBatch: lastUsed,
+    };
   };
 
   return (
@@ -196,7 +244,7 @@ export default function RecipesPage() {
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-3xl font-bold text-ink-300">配方库</h1>
-          <p className="mt-1 text-sm text-ink-100">保存成熟的抄造方案为配方，支持多版本管理，一键载入稳定输出品质</p>
+          <p className="mt-1 text-sm text-ink-100">保存成熟的抄造方案为配方，支持多版本管理与质量统计，一键载入稳定输出品质</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative">
@@ -210,26 +258,28 @@ export default function RecipesPage() {
         </div>
       </header>
 
-      <div className="flex flex-wrap gap-2">
-        {FILTER_OPTIONS.map((opt) => {
-          const Icon = opt.icon;
-          const active = recipeFilter === opt.value;
-          return (
-            <button
-              key={opt.value}
-              onClick={() => setRecipeFilter(opt.value)}
-              className={[
-                'flex items-center gap-2 rounded-lg border-2 px-4 py-2 text-sm font-medium transition-all',
-                active
-                  ? 'border-bronze-500 bg-bronze-50 text-bronze-700 shadow-sm'
-                  : 'border-bronze-200 bg-white/60 text-ink-200 hover:border-bronze-300 hover:bg-white',
-              ].join(' ')}
-            >
-              <Icon className="h-4 w-4" />
-              {opt.label}
-            </button>
-          );
-        })}
+      <div className="rounded-xl border border-bronze-100 bg-bronze-50/40 p-3">
+        <div className="flex flex-wrap gap-2">
+          {FILTER_OPTIONS.map((opt) => {
+            const Icon = opt.icon;
+            const active = recipeFilter === opt.value;
+            return (
+              <button
+                key={opt.value}
+                onClick={() => setRecipeFilter(opt.value)}
+                className={[
+                  'flex items-center gap-2 rounded-lg border-2 px-4 py-2 text-sm font-medium transition-all',
+                  active
+                    ? 'border-bronze-500 bg-gradient-to-br from-bronze-50 to-rattan-100 text-bronze-700 shadow-sm'
+                    : 'border-bronze-200 bg-white/60 text-ink-200 hover:border-bronze-300 hover:bg-white',
+                ].join(' ')}
+              >
+                <Icon className="h-4 w-4" />
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
@@ -250,7 +300,7 @@ export default function RecipesPage() {
                   const active = selectedId === r.id;
                   const isRecommended = !!r.recommendedVersionId;
                   const lastUsed = r.lastUsedAt;
-                  const bestBatch = getBestQualityBatch(r);
+                  const bestQuality = getBestQuality(r);
                   return (
                     <button
                       key={r.id}
@@ -312,10 +362,14 @@ export default function RecipesPage() {
                             最近使用
                           </Badge>
                         )}
-                        {bestBatch && bestBatch.qualityLevel === '优' && (
-                          <Badge tone="bamboo" className="flex items-center gap-1">
+                        {bestQuality && (
+                          <Badge
+                            tone={bestQuality === '优' ? 'bamboo' : bestQuality === '良' ? 'bronze' : bestQuality === '合格' ? 'rattan' : 'cinnabar'}
+                            size="sm"
+                            className="flex items-center gap-1"
+                          >
                             <Award className="h-2.5 w-2.5" />
-                            优品级
+                            最佳 {bestQuality}
                           </Badge>
                         )}
                       </div>
@@ -338,6 +392,14 @@ export default function RecipesPage() {
                     {selected.recommendedVersionId && (
                       <Badge tone="bamboo" size="md" className="flex items-center gap-1">
                         <Star className="h-3 w-3 fill-current" /> 推荐方案
+                      </Badge>
+                    )}
+                    {getBestQuality(selected) && (
+                      <Badge
+                        tone={getBestQuality(selected) === '优' ? 'bamboo' : getBestQuality(selected) === '良' ? 'bronze' : getBestQuality(selected) === '合格' ? 'rattan' : 'cinnabar'}
+                        size="sm"
+                      >
+                        历史最佳 {getBestQuality(selected)}
                       </Badge>
                     )}
                   </div>
@@ -366,70 +428,170 @@ export default function RecipesPage() {
                 </div>
               }
             >
-              {versions.length > 1 && (
+              {versions.length > 0 && (
                 <div className="mb-5 rounded-xl border border-bronze-100 bg-bronze-50/50 p-4">
                   <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink-200">
                     <GitBranch className="h-4 w-4" /> 版本管理
-                    <span className="ml-1 text-xs font-normal text-ink-100">（共 {versions.length} 个版本）</span>
+                    <span className="ml-1 text-xs font-normal text-ink-100">（共 {versions.length} 个版本，点击版本卡片查看详情与批次统计）</span>
                   </h4>
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {versions.map((v) => {
                       const isActive = v.id === activeVersionId;
                       const isRecommended = v.id === selected.recommendedVersionId;
                       const refBatch = v.qualityRefBatchId ? batches.find((b) => b.id === v.qualityRefBatchId) : null;
+                      const stats = getVersionStats(v, selected.paperType || '');
                       return (
                         <div
                           key={v.id}
                           className={[
-                            'flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3 transition-all',
+                            'rounded-lg border transition-all',
                             isActive
                               ? 'border-bronze-400 bg-white shadow-sm'
                               : 'border-bronze-100 bg-white/50 hover:border-bronze-200',
                           ].join(' ')}
                         >
-                          <button
+                          <div
+                            className="flex flex-wrap items-center justify-between gap-3 p-3 cursor-pointer"
                             onClick={() => setSelectedVersionId(v.id)}
-                            className="flex flex-1 items-center gap-3 text-left"
                           >
-                            <div className={[
-                              'flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold',
-                              isRecommended ? 'bg-bamboo-100 text-bamboo-600' : 'bg-bronze-100 text-bronze-600',
-                            ].join(' ')}>
-                              {isRecommended && <Star className="h-3.5 w-3.5 fill-current" />}
-                              {!isRecommended && v.version.replace('v', '')}
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <span className="font-display font-semibold text-ink-300">{v.version}</span>
-                                {isRecommended && <Badge tone="bamboo" size="sm">推荐版本</Badge>}
-                                {refBatch && <Badge tone="bronze" size="sm">来自 {refBatch.batchNo}</Badge>}
+                            <div className="flex flex-1 items-center gap-3 text-left">
+                              <div className={[
+                                'flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold',
+                                isRecommended ? 'bg-bamboo-100 text-bamboo-600 ring-2 ring-bamboo-200' : 'bg-bronze-100 text-bronze-600',
+                              ].join(' ')}>
+                                {isRecommended && <Star className="h-4 w-4 fill-current" />}
+                                {!isRecommended && v.version.replace('v', '')}
                               </div>
-                              <div className="mt-0.5 flex items-center gap-2 text-xs text-ink-100">
-                                <Calendar className="h-3 w-3" />
-                                {v.createdAt}
-                                {v.note && <span className="ml-1">· {v.note}</span>}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-display font-semibold text-ink-300">{v.version}</span>
+                                  {isRecommended && <Badge tone="bamboo" size="sm">推荐版本</Badge>}
+                                  {refBatch && <Badge tone="bronze" size="sm">来自 {refBatch.batchNo}</Badge>}
+                                  {stats && (
+                                    <Badge
+                                      tone={stats.avgLevel === '优' ? 'bamboo' : stats.avgLevel === '良' ? 'bronze' : stats.avgLevel === '合格' ? 'rattan' : 'cinnabar'}
+                                      size="sm"
+                                      className="flex items-center gap-1"
+                                    >
+                                      <CheckCircle className="h-2.5 w-2.5" />
+                                      平均 {stats.avgLevel} ({stats.batchCount}批)
+                                    </Badge>
+                                  )}
+                                </div>
+                                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-ink-100">
+                                  <Calendar className="h-3 w-3" />
+                                  {v.createdAt}
+                                  {v.note && <span className="truncate">· {v.note}</span>}
+                                </div>
                               </div>
                             </div>
-                          </button>
-                          <div className="flex items-center gap-2">
-                            {!isRecommended && (
+                            <div className="flex items-center gap-2">
+                              {!isRecommended && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  icon={<Star className="h-3.5 w-3.5" />}
+                                  onClick={(e) => { e.stopPropagation(); handleSetRecommended(selected, v.id); }}
+                                >
+                                  设为推荐
+                                </Button>
+                              )}
                               <Button
                                 size="sm"
-                                variant="ghost"
-                                icon={<Star className="h-3.5 w-3.5" />}
-                                onClick={() => handleSetRecommended(selected, v.id)}
+                                variant={isActive ? 'success' : 'secondary'}
+                                onClick={(e) => { e.stopPropagation(); handleLoad(selected, v.id); }}
                               >
-                                设为推荐
+                                载入
                               </Button>
-                            )}
-                            <Button
-                              size="sm"
-                              variant={isActive ? 'success' : 'secondary'}
-                              onClick={() => handleLoad(selected, v.id)}
-                            >
-                              载入
-                            </Button>
+                            </div>
                           </div>
+
+                          {isActive && stats && (
+                            <div className="border-t border-bronze-100 bg-white/70 p-3 space-y-3">
+                              <div className="grid grid-cols-2 gap-3 md:grid-cols-4 text-xs">
+                                <div className="rounded-lg border border-bamboo-100 bg-bamboo-50/40 p-2.5">
+                                  <div className="text-ink-100 flex items-center gap-1"><FileText className="h-3 w-3" />关联批次</div>
+                                  <div className="mt-0.5 font-display font-bold text-lg text-bamboo-600 tabular-nums">{stats.batchCount}</div>
+                                </div>
+                                <div className="rounded-lg border border-bronze-100 bg-bronze-50/40 p-2.5">
+                                  <div className="text-ink-100 flex items-center gap-1"><Award className="h-3 w-3" />平均品质</div>
+                                  <div className="mt-0.5 font-display font-bold text-lg tabular-nums text-bronze-600">
+                                    {stats.avgLevel}
+                                    <span className="ml-1 text-[10px] font-normal text-ink-100">({stats.avgQuality.toFixed(1)}/4)</span>
+                                  </div>
+                                </div>
+                                <div className="rounded-lg border border-rattan-100 bg-rattan-50/40 p-2.5">
+                                  <div className="text-ink-100 flex items-center gap-1"><Beaker className="h-3 w-3" />平均CV</div>
+                                  <div className={[
+                                    'mt-0.5 font-display font-bold text-lg tabular-nums',
+                                    stats.avgCV < 5 ? 'text-bamboo-600' : stats.avgCV < 10 ? 'text-bronze-600' : 'text-cinnabar-500',
+                                  ].join(' ')}>
+                                    {stats.avgCV.toFixed(2)}%
+                                  </div>
+                                </div>
+                                <div className="rounded-lg border border-rattan-100 bg-rattan-50/40 p-2.5">
+                                  <div className="text-ink-100 flex items-center gap-1"><Target className="h-3 w-3" />克重偏差</div>
+                                  <div className={[
+                                    'mt-0.5 font-display font-bold text-lg tabular-nums',
+                                    stats.avgGramDev < 3 ? 'text-bamboo-600' : stats.avgGramDev < 7 ? 'text-bronze-600' : 'text-cinnabar-500',
+                                  ].join(' ')}>
+                                    {stats.avgGramDev.toFixed(1)}%
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div>
+                                <div className="mb-1.5 text-[11px] font-semibold text-ink-200 flex items-center gap-1">
+                                  <Calendar className="h-3 w-3" />
+                                  历史批次记录（最近{Math.min(stats.batches.length, 5)}次）
+                                </div>
+                                <div className="overflow-x-auto rounded-lg border border-bronze-100">
+                                  <table className="w-full text-[11px]">
+                                    <thead>
+                                      <tr className="bg-bronze-50 text-ink-100">
+                                        <th className="py-1.5 px-2 text-left font-medium">批次号</th>
+                                        <th className="py-1.5 px-2 text-left font-medium">日期</th>
+                                        <th className="py-1.5 px-2 text-center font-medium">品质</th>
+                                        <th className="py-1.5 px-2 text-center font-medium">CV%</th>
+                                        <th className="py-1.5 px-2 text-center font-medium">克重偏差</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {stats.batches.slice(0, 5).map((b) => (
+                                        <tr key={b.id} className="border-t border-bronze-50">
+                                          <td className="py-1.5 px-2 font-medium tabular-nums text-bronze-600">{b.batchNo}</td>
+                                          <td className="py-1.5 px-2 text-ink-200 tabular-nums">{b.date}</td>
+                                          <td className="py-1.5 px-2 text-center">
+                                            <Badge tone={b.qualityLevel === '优' ? 'bamboo' : b.qualityLevel === '良' ? 'bronze' : b.qualityLevel === '合格' ? 'rattan' : 'cinnabar'} size="sm">
+                                              {b.qualityLevel}
+                                            </Badge>
+                                          </td>
+                                          <td className="py-1.5 px-2 text-center tabular-nums text-ink-300">{b.uniformityCV_pct.toFixed(2)}%</td>
+                                          <td className="py-1.5 px-2 text-center tabular-nums text-ink-300">
+                                            {(Math.abs(b.actualAvgGrammage - b.targetGrammage) / b.targetGrammage * 100).toFixed(2)}%
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+
+                              {stats.lastUsedBatch && (
+                                <div className="rounded-lg border border-bamboo-200 bg-bamboo-50/40 p-2.5 text-xs flex items-center gap-2">
+                                  <CheckCircle className="h-4 w-4 text-bamboo-500 shrink-0" />
+                                  <div>
+                                    <span className="font-medium text-bamboo-600">最近一次使用结果：</span>
+                                    <span className="text-ink-200 ml-1">
+                                      {stats.lastUsedBatch.batchNo} · 品质{stats.lastUsedBatch.qualityLevel} · 
+                                      CV {stats.lastUsedBatch.uniformityCV_pct.toFixed(2)}% · 
+                                      {stats.lastUsedBatch.createdAt}
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -591,11 +753,20 @@ export default function RecipesPage() {
   );
 }
 
+function isSameConfig(a: any, b: any): boolean {
+  const KEYS = [
+    'targetGrammage', 'beatingDegree_SR', 'sizingDose_pct',
+    'pressPressure_kg', 'pressDuration_min', 'dryingTemp_C',
+    'perSwingVolume_mL', 'waterVolume_L', 'targetWidth_mm', 'targetHeight_mm',
+  ];
+  return KEYS.every((k) => String(a[k]) === String(b[k]));
+}
+
 function Row({ k, v }: { k: string; v: string }) {
   return (
     <div className="flex items-center justify-between border-b border-dashed border-bronze-100 pb-1.5 last:border-0 last:pb-0">
       <span className="text-ink-100">{k}</span>
-      <span className="font-medium text-ink-300">{v}</span>
+      <span className="font-medium text-ink-300 tabular-nums">{v}</span>
     </div>
   );
 }

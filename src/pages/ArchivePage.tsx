@@ -3,6 +3,7 @@ import {
   FileArchive, Search, Filter, Calendar, FileText, Trash2, ChevronRight, X,
   Layers, Scale, Gauge, AlertTriangle, CheckCircle, User,
   GitCompare, CheckSquare, Square, ArrowRight, Plus, Hand, Paperclip, Sun,
+  BarChart3, LineChart, AlertOctagon, Wind, Sparkles, Eye, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import PaperCard from '@/components/layout/PaperCard';
 import Button from '@/components/ui/Button';
@@ -10,8 +11,31 @@ import Field, { TextInput, Select } from '@/components/ui/Field';
 import ProgressBar, { Badge } from '@/components/ui/ProgressBar';
 import MetricDisplay from '@/components/ui/MetricDisplay';
 import { usePaperStore } from '@/store/paperStore';
-import type { Batch } from '@/types';
+import type { Batch, RatioConfig, RecipeVersion } from '@/types';
 import { detectDeviation } from '@/utils/thickness';
+
+interface PaperTypeSummary {
+  paperType: string;
+  batchCount: number;
+  avgCV: number;
+  avgMaxDev: number;
+  overToleranceCount: number;
+  releaseIssues: number;
+  avgGrammageDeviation_pct: number;
+  lastBatchDate: string;
+  qualityDist: Record<string, number>;
+}
+
+const QUALITY_SCORE: Record<string, number> = { '优': 4, '良': 3, '合格': 2, '不合格': 1 };
+const PARAM_IMPACT_KEYS: Array<{ key: keyof RatioConfig; label: string; unit: string }> = [
+  { key: 'beatingDegree_SR', label: '打浆度', unit: '°SR' },
+  { key: 'sizingDose_pct', label: '纸药用量', unit: '%' },
+  { key: 'pressPressure_kg', label: '压榨压力', unit: 'kg' },
+  { key: 'pressDuration_min', label: '压榨时长', unit: 'min' },
+  { key: 'dryingTemp_C', label: '晒纸温度', unit: '°C' },
+  { key: 'perSwingVolume_mL', label: '入帘浆量', unit: 'mL' },
+  { key: 'waterVolume_L', label: '用水量', unit: 'L' },
+];
 
 export default function ArchivePage() {
   const batches = usePaperStore((s) => s.batches);
@@ -28,10 +52,18 @@ export default function ArchivePage() {
   const [kw, setKw] = useState('');
   const [qlFilter, setQlFilter] = useState<string>('全部');
   const [compareMode, setCompareMode] = useState(false);
+  const [selectedPaperType, setSelectedPaperType] = useState<string | null>(null);
+  const [previewModal, setPreviewModal] = useState<{
+    open: boolean;
+    batchId: string;
+    recipeId: string;
+    recipeName: string;
+  } | null>(null);
 
   const filtered = useMemo(() => {
     return batches.filter((b) => {
       if (qlFilter !== '全部' && b.qualityLevel !== qlFilter) return false;
+      if (selectedPaperType && b.configSnapshot.paperType !== selectedPaperType) return false;
       if (!kw.trim()) return true;
       const k = kw.trim().toLowerCase();
       return (
@@ -40,7 +72,83 @@ export default function ArchivePage() {
         b.operator.toLowerCase().includes(k)
       );
     });
-  }, [batches, kw, qlFilter]);
+  }, [batches, kw, qlFilter, selectedPaperType]);
+
+  const stabilitySummary = useMemo((): PaperTypeSummary[] => {
+    const map = new Map<string, Batch[]>();
+    batches.forEach((b) => {
+      const pt = b.configSnapshot.paperType;
+      if (!map.has(pt)) map.set(pt, []);
+      map.get(pt)!.push(b);
+    });
+    return Array.from(map.entries()).map(([paperType, list]) => {
+      const sorted = [...list].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      const recent = sorted.slice(0, 10);
+      const avgCV = recent.reduce((s, b) => s + b.uniformityCV_pct, 0) / (recent.length || 1);
+      const avgMaxDev = recent.reduce((s, b) => s + b.maxDeviation_pct, 0) / (recent.length || 1);
+      const overTol = recent.filter((b) => b.maxDeviation_pct > b.tolerance_pct).length;
+      const releaseIssue = recent.filter((b) => b.papermakingRecord && (b.papermakingRecord.releaseSituation === '粘连' || b.papermakingRecord.releaseSituation === '破损')).length;
+      const avgGramDev = recent.reduce((s, b) => s + Math.abs(b.actualAvgGrammage - b.targetGrammage) / b.targetGrammage * 100, 0) / (recent.length || 1);
+      const qualityDist: Record<string, number> = {};
+      recent.forEach((b) => { qualityDist[b.qualityLevel] = (qualityDist[b.qualityLevel] || 0) + 1; });
+      return {
+        paperType,
+        batchCount: recent.length,
+        avgCV,
+        avgMaxDev,
+        overToleranceCount: overTol,
+        releaseIssues: releaseIssue,
+        avgGrammageDeviation_pct: avgGramDev,
+        lastBatchDate: sorted[0]?.createdAt || '',
+        qualityDist,
+      };
+    }).sort((a, b) => b.batchCount - a.batchCount);
+  }, [batches]);
+
+  const impactAnalysis = useMemo(() => {
+    if (!selectedPaperType) return null;
+    const targetBatches = batches
+      .filter((b) => b.configSnapshot.paperType === selectedPaperType)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 20);
+    if (targetBatches.length < 3) return null;
+
+    return PARAM_IMPACT_KEYS.map(({ key, label, unit }) => {
+      const values = targetBatches.map((b) => ({
+        param: b.configSnapshot[key] as number,
+        quality: QUALITY_SCORE[b.qualityLevel] || 2,
+        cv: b.uniformityCV_pct,
+      }));
+
+      const paramVals = values.map((v) => v.param);
+      const minP = Math.min(...paramVals);
+      const maxP = Math.max(...paramVals);
+      const range = maxP - minP || 1;
+      const qualityVals = values.map((v) => v.quality);
+      const cvVals = values.map((v) => v.cv);
+
+      const qCorr = pearson(paramVals, qualityVals);
+      const cvCorr = pearson(paramVals, cvVals);
+      const impactScore = (Math.abs(qCorr) * 0.6 + Math.abs(cvCorr) * 0.4) * 100;
+
+      const avgLow = values.filter((v) => v.param <= minP + range * 0.33).reduce((s, v) => s + v.quality, 0) / (values.filter((v) => v.param <= minP + range * 0.33).length || 1);
+      const avgHigh = values.filter((v) => v.param >= maxP - range * 0.33).reduce((s, v) => s + v.quality, 0) / (values.filter((v) => v.param >= maxP - range * 0.33).length || 1);
+      const trend = avgHigh > avgLow + 0.3 ? '↑ 调高更好' : avgHigh < avgLow - 0.3 ? '↓ 调低更好' : '→ 影响不大';
+
+      return {
+        key,
+        label,
+        unit,
+        impactScore,
+        qCorr,
+        cvCorr,
+        trend,
+        range: `${minP}~${maxP}`,
+        avgLow: avgLow.toFixed(1),
+        avgHigh: avgHigh.toFixed(1),
+      };
+    }).sort((a, b) => b.impactScore - a.impactScore);
+  }, [batches, selectedPaperType]);
 
   const selected = batches.find((b) => b.id === selectedId) || null;
   const compareBatches = compareBatchIds
@@ -57,18 +165,24 @@ export default function ArchivePage() {
     const existingRecipe = recipes.find((r) => r.paperType === paperType);
 
     if (existingRecipe) {
-      const note = prompt(`请输入版本备注：`, `沉淀自批次 ${b.batchNo}`);
-      if (note === null) return;
-      addRecipeVersion(existingRecipe.id, note || '', b.id);
-      alert(`已沉淀为「${existingRecipe.name}」的新版本`);
+      setPreviewModal({
+        open: true,
+        batchId: b.id,
+        recipeId: existingRecipe.id,
+        recipeName: existingRecipe.name,
+      });
     } else {
       const shouldCreate = confirm(
-        `未找到「${paperType}」的配方，是否创建新配方？\n\n创建后将自动包含此批次参数作为初始版本。`
+        `未找到「${paperType}」的配方，是否创建新配方？\n\n请先前往配方库或配比页创建配方。`
       );
-      if (shouldCreate) {
-        alert('请前往配方库创建新配方，或使用配比页保存配方功能');
-      }
     }
+  };
+
+  const confirmAddVersion = (note: string) => {
+    if (!previewModal) return;
+    addRecipeVersion(previewModal.recipeId, note || '', previewModal.batchId);
+    setPreviewModal(null);
+    alert('版本沉淀成功！前往配方库查看新版本');
   };
 
   const canAddToCompare = (b: Batch) => {
@@ -84,7 +198,7 @@ export default function ArchivePage() {
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-3xl font-bold text-ink-300">工艺档案</h1>
-          <p className="mt-1 text-sm text-ink-100">记录每批抄造的完整参数链，支持检索、对比与复用</p>
+          <p className="mt-1 text-sm text-ink-100">记录每批抄造的完整参数链，支持稳定性分析、批次对比与配方沉淀</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative">
@@ -113,6 +227,14 @@ export default function ArchivePage() {
           <Badge tone="ink">共 {filtered.length} 批次</Badge>
         </div>
       </header>
+
+      <StabilityDashboard
+        summary={stabilitySummary}
+        selectedPaperType={selectedPaperType}
+        onSelectPaperType={setSelectedPaperType}
+        impactAnalysis={impactAnalysis}
+        batches={batches.filter((b) => b.configSnapshot.paperType === selectedPaperType)}
+      />
 
       {compareMode && compareBatches.length >= 2 && (
         <PaperCard
@@ -146,25 +268,42 @@ export default function ArchivePage() {
               <tbody>
                 {[
                   { label: '目标克重', key: 'targetGrammage', unit: 'g/m²', get: (b: Batch) => b.targetGrammage },
-                  { label: '实际克重', key: 'actualGrammage', unit: 'g/m²', get: (b: Batch) => b.actualAvgGrammage.toFixed(1), highlight: true },
+                  {
+                    label: '实际克重', key: 'actualGrammage', unit: 'g/m²',
+                    get: (b: Batch) => b.actualAvgGrammage.toFixed(1),
+                    highlight: true,
+                    bestMode: 'closest-to-target' as const,
+                    targetGetter: (b: Batch) => b.targetGrammage,
+                  },
                   { label: '匀度 CV', key: 'cv', unit: '%', get: (b: Batch) => b.uniformityCV_pct.toFixed(2), highlight: true, lowerIsBetter: true },
                   { label: '最大偏差', key: 'maxDev', unit: '%', get: (b: Batch) => b.maxDeviation_pct.toFixed(1), highlight: true, lowerIsBetter: true },
+                  { label: '克重偏差率', key: 'gramDev', unit: '%', get: (b: Batch) => `${(Math.abs(b.actualAvgGrammage - b.targetGrammage) / b.targetGrammage * 100).toFixed(2)}`, highlight: true, lowerIsBetter: true },
                   { label: '荡料次数(目标)', key: 'targetSwing', unit: '次', get: (b: Batch) => b.targetSwingCount },
                   { label: '纸药用量', key: 'sizingDose', unit: '%', get: (b: Batch) => b.configSnapshot.sizingDose_pct },
                   { label: '打浆度', key: 'beating', unit: '°SR', get: (b: Batch) => b.configSnapshot.beatingDegree_SR },
                   { label: '压榨压力', key: 'pressPressure', unit: 'kg', get: (b: Batch) => b.configSnapshot.pressPressure_kg },
                   { label: '压榨时长', key: 'pressDuration', unit: 'min', get: (b: Batch) => b.configSnapshot.pressDuration_min },
                   { label: '晒纸温度', key: 'dryingTemp', unit: '°C', get: (b: Batch) => b.configSnapshot.dryingTemp_C },
-                  { label: '质量等级', key: 'quality', unit: '', get: (b: Batch) => b.qualityLevel },
+                  { label: '质量等级', key: 'quality', unit: '', get: (b: Batch) => b.qualityLevel, highlight: true, higherIsBetter: true },
                 ].map((row, ri) => {
                   const values = compareBatches.map((b) => row.get(b));
+                  const targets = 'targetGetter' in row ? compareBatches.map((b) => (row as any).targetGetter(b)) : null;
                   const numValues = values.map((v) => typeof v === 'number' ? v : parseFloat(v as string));
                   const hasValidNums = numValues.every((v) => !isNaN(v));
                   let bestIdx = -1;
+
                   if (row.highlight && hasValidNums) {
-                    bestIdx = row.lowerIsBetter
-                      ? numValues.indexOf(Math.min(...numValues))
-                      : numValues.indexOf(Math.max(...numValues));
+                    if ((row as any).bestMode === 'closest-to-target' && targets) {
+                      const deviations = numValues.map((v, i) => Math.abs(v - targets[i]));
+                      bestIdx = deviations.indexOf(Math.min(...deviations));
+                    } else if (row.lowerIsBetter) {
+                      bestIdx = numValues.indexOf(Math.min(...numValues));
+                    } else if ((row as any).higherIsBetter) {
+                      const scores = values.map((v) => QUALITY_SCORE[v as string] || 0);
+                      bestIdx = scores.indexOf(Math.max(...scores));
+                    } else {
+                      bestIdx = numValues.indexOf(Math.max(...numValues));
+                    }
                   }
                   return (
                     <tr key={row.key} className={ri % 2 === 0 ? 'bg-bronze-50/30' : ''}>
@@ -188,9 +327,11 @@ export default function ArchivePage() {
               </tbody>
             </table>
           </div>
-          <div className="mt-4 flex items-center gap-2 text-xs text-ink-100">
-            <CheckCircle className="h-3.5 w-3.5 text-bamboo-500" />
-            <span>✓ 标记为该维度的最优值。匀度 CV 和最大偏差越低越好，克重越接近目标越好。</span>
+          <div className="mt-4 space-y-1 text-xs text-ink-100">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="h-3.5 w-3.5 text-bamboo-500" />
+              <span>✓ 标记为该维度的最优值：克重越接近目标越好，CV/偏差越低越好，等级越高越好。</span>
+            </div>
           </div>
         </PaperCard>
       )}
@@ -201,6 +342,13 @@ export default function ArchivePage() {
             title="批次时间线"
             subtitle={compareMode ? '点击□选择对比（最多3批同类纸）' : '点击卡片查看详情'}
             icon={<FileArchive className="h-5 w-5" />}
+            actions={
+              selectedPaperType ? (
+                <Button size="sm" variant="ghost" onClick={() => setSelectedPaperType(null)}>
+                  取消纸种筛选
+                </Button>
+              ) : undefined
+            }
           >
             {!filtered.length ? (
               <div className="rounded-lg bg-bronze-50/60 py-16 text-center text-sm text-ink-100">
@@ -244,10 +392,10 @@ export default function ArchivePage() {
                           className={[
                             'group flex-1 rounded-xl border p-4 text-left transition-all',
                             selectedId === b.id && !compareMode
-                              ? 'border-bronze-400 bg-gradient-to-br from-bronze-50 to-rattan-100/60 shadow-paper'
+                              ? 'border-bronze-400 bg-gradient-to-br from-bronze-50 via-white to-rattan-100/60 shadow-paper'
                               : isInCompare
                               ? 'border-bronze-400 bg-bronze-50/60'
-                              : 'border-bronze-100 bg-white/50 hover:border-bronze-200 hover:bg-white',
+                              : 'border-bronze-100 bg-white/50 hover:border-bronze-200 hover:bg-white hover:shadow-paper',
                             compareMode && 'cursor-default',
                           ].join(' ')}
                         >
@@ -264,7 +412,7 @@ export default function ArchivePage() {
                               </div>
                               <div className="mt-0.5 text-xs text-ink-100">{b.configSnapshot.paperType}</div>
                             </div>
-                            {!compareMode && <ChevronRight className={`h-4 w-4 transition-all ${selectedId === b.id ? 'text-bronze-500' : 'text-ink-100 group-hover:translate-x-0.5'}`} />}
+                            {!compareMode && <ChevronRight className={`h-4 w-4 transition-all ${selectedId === b.id ? 'text-bronze-500 translate-x-0' : 'text-ink-100 group-hover:translate-x-0.5'}`} />}
                           </div>
                           <div className="grid grid-cols-3 gap-2 text-xs">
                             <div>
@@ -323,15 +471,353 @@ export default function ArchivePage() {
                     <Filter className="h-9 w-9" />
                   </div>
                   <p className="text-sm text-ink-200">未选择批次</p>
-                  <p className="mt-1 text-xs text-ink-100">左侧按时间倒序排列，点击卡片即可查看详情</p>
+                  <p className="mt-1 text-xs text-ink-100">左侧按时间倒序排列，点击卡片即可查看详情；上方看板可快速筛选纸种</p>
                 </div>
               </div>
             </PaperCard>
           )}
         </div>
       </div>
+
+      {previewModal && (
+        <VersionPreviewModal
+          batch={batches.find((b) => b.id === previewModal.batchId)!}
+          recipeName={previewModal.recipeName}
+          onClose={() => setPreviewModal(null)}
+          onConfirm={confirmAddVersion}
+          existingVersions={recipes.find((r) => r.id === previewModal.recipeId)?.versions || []}
+        />
+      )}
     </div>
   );
+}
+
+function StabilityDashboard({
+  summary, selectedPaperType, onSelectPaperType, impactAnalysis, batches,
+}: {
+  summary: PaperTypeSummary[];
+  selectedPaperType: string | null;
+  onSelectPaperType: (p: string | null) => void;
+  impactAnalysis: any;
+  batches: Batch[];
+}) {
+  const [expanded, setExpanded] = useState(true);
+
+  return (
+    <PaperCard
+      title={
+        <div className="flex items-center gap-3">
+          <BarChart3 className="h-5 w-5" />
+          <span>工艺稳定性看板</span>
+          <Badge tone="ink">{summary.length} 个纸种</Badge>
+        </div>
+      }
+      subtitle="按纸种汇总最近批次的波动指标，点击卡片查看参数影响分析"
+      icon={<BarChart3 className="h-5 w-5" />}
+      actions={
+        <Button variant="ghost" size="sm" onClick={() => setExpanded(!expanded)}>
+          {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </Button>
+      }
+    >
+      {expanded && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {summary.map((s) => {
+              const active = selectedPaperType === s.paperType;
+              const stableScore = Math.max(0, 100
+                - s.avgCV * 4
+                - s.avgMaxDev * 2
+                - s.overToleranceCount * 8
+                - s.avgGrammageDeviation_pct * 3
+                - s.releaseIssues * 10);
+              const grade = stableScore >= 80 ? '稳定' : stableScore >= 60 ? '一般' : '波动';
+              return (
+                <button
+                  key={s.paperType}
+                  onClick={() => onSelectPaperType(active ? null : s.paperType)}
+                  className={[
+                    'rounded-xl border p-4 text-left transition-all',
+                    active
+                      ? 'border-bronze-500 bg-gradient-to-br from-bronze-50 to-rattan-100/50 shadow-paper'
+                      : 'border-bronze-100 bg-white/60 hover:border-bronze-300 hover:bg-white hover:shadow-paper',
+                  ].join(' ')}
+                >
+                  <div className="mb-3 flex items-start justify-between">
+                    <div>
+                      <div className="font-display font-bold text-lg text-ink-300">{s.paperType}</div>
+                      <div className="text-xs text-ink-100 mt-0.5">
+                        近 {s.batchCount} 批 · {s.lastBatchDate}
+                      </div>
+                    </div>
+                    <Badge tone={grade === '稳定' ? 'bamboo' : grade === '一般' ? 'bronze' : 'cinnabar'} size="sm">
+                      {grade}
+                    </Badge>
+                  </div>
+                  <ProgressBar label="稳定性评分" value={Math.round(stableScore)} max={100} variant="uniformity" />
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+                    <div className="rounded bg-bronze-50/70 p-2">
+                      <div className="text-ink-100 flex items-center gap-1"><LineChart className="h-3 w-3" />平均 CV</div>
+                      <div className="mt-0.5 font-semibold tabular-nums text-ink-300">{s.avgCV.toFixed(2)}%</div>
+                    </div>
+                    <div className="rounded bg-bronze-50/70 p-2">
+                      <div className="text-ink-100 flex items-center gap-1"><Gauge className="h-3 w-3" />最大偏差</div>
+                      <div className="mt-0.5 font-semibold tabular-nums text-ink-300">{s.avgMaxDev.toFixed(1)}%</div>
+                    </div>
+                    <div className="rounded bg-bronze-50/70 p-2">
+                      <div className="text-ink-100 flex items-center gap-1"><AlertOctagon className="h-3 w-3" />超差批次</div>
+                      <div className={[
+                        'mt-0.5 font-semibold tabular-nums',
+                        s.overToleranceCount === 0 ? 'text-bamboo-600' : s.overToleranceCount <= 2 ? 'text-bronze-500' : 'text-cinnabar-500',
+                      ].join(' ')}>{s.overToleranceCount}/{s.batchCount}</div>
+                    </div>
+                    <div className="rounded bg-bronze-50/70 p-2">
+                      <div className="text-ink-100 flex items-center gap-1"><Wind className="h-3 w-3" />揭纸问题</div>
+                      <div className={[
+                        'mt-0.5 font-semibold tabular-nums',
+                        s.releaseIssues === 0 ? 'text-bamboo-600' : 'text-cinnabar-500',
+                      ].join(' ')}>{s.releaseIssues} 次</div>
+                    </div>
+                  </div>
+                  {Object.keys(s.qualityDist).length > 0 && (
+                    <div className="mt-3 flex items-center gap-1.5 flex-wrap text-[10px]">
+                      {(['优', '良', '合格', '不合格'] as const).map((lv) => (
+                        s.qualityDist[lv] && (
+                          <Badge key={lv} tone={
+                            lv === '优' ? 'bamboo' : lv === '良' ? 'bronze' : lv === '合格' ? 'rattan' : 'cinnabar'
+                          } size="sm">
+                            {lv} {s.qualityDist[lv]}
+                          </Badge>
+                        )
+                      ))}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {selectedPaperType && impactAnalysis && (
+            <div className="rounded-xl border border-bronze-100 bg-gradient-to-br from-bronze-50/80 to-rattan-50/60 p-5">
+              <h4 className="mb-4 flex items-center gap-2 font-display font-semibold text-ink-300">
+                <Sparkles className="h-4 w-4 text-bronze-500" />
+                「{selectedPaperType}」工艺参数影响分析
+                <span className="ml-2 text-xs font-normal text-ink-100">（基于最近 {batches.length} 批次相关性分析）</span>
+              </h4>
+              {impactAnalysis.length > 0 ? (
+                <div className="space-y-3">
+                  {impactAnalysis.map((it: any) => (
+                    <div key={it.key} className="rounded-lg bg-white/70 p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-ink-300 text-sm">{it.label}</span>
+                          <span className="text-[10px] text-ink-100 tabular-nums">范围 {it.range} {it.unit}</span>
+                          <Badge tone={it.trend.startsWith('↑') ? 'bamboo' : it.trend.startsWith('↓') ? 'rattan' : 'ink'} size="sm">
+                            {it.trend}
+                          </Badge>
+                        </div>
+                        <span className={[
+                          'text-xs font-bold tabular-nums',
+                          it.impactScore >= 40 ? 'text-cinnabar-500' : it.impactScore >= 20 ? 'text-bronze-500' : 'text-ink-100',
+                        ].join(' ')}>
+                          影响度 {it.impactScore.toFixed(0)}
+                        </span>
+                      </div>
+                      <ProgressBar
+                        label={`${it.label}影响权重`}
+                        value={it.impactScore}
+                        max={100}
+                        variant="strength"
+                      />
+                      <div className="mt-2 grid grid-cols-3 gap-2 text-[11px]">
+                        <div className="text-ink-100 tabular-nums">品质相关 r={it.qCorr.toFixed(2)}</div>
+                        <div className="text-ink-100 tabular-nums">匀度相关 r={it.cvCorr.toFixed(2)}</div>
+                        <div className="text-ink-100 tabular-nums">低段品质 {it.avgLow} / 高段 {it.avgHigh}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="py-8 text-center text-sm text-ink-100">
+                  该纸种批次不足 3 批，需要更多数据才能分析参数影响
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </PaperCard>
+  );
+}
+
+function VersionPreviewModal({
+  batch, recipeName, onClose, onConfirm, existingVersions,
+}: {
+  batch: Batch;
+  recipeName: string;
+  onClose: () => void;
+  onConfirm: (note: string) => void;
+  existingVersions: RecipeVersion[];
+}) {
+  const [note, setNote] = useState(`沉淀自批次 ${batch.batchNo}`);
+  const lastVersion = existingVersions[existingVersions.length - 1];
+  const lastConfig = lastVersion?.config;
+
+  const diffs = useMemo(() => {
+    if (!lastConfig) return [];
+    return PARAM_IMPACT_KEYS.concat([
+      { key: 'targetGrammage' as const, label: '目标克重', unit: 'g/m²' },
+      { key: 'targetWidth_mm' as const, label: '幅面宽度', unit: 'mm' },
+      { key: 'targetHeight_mm' as const, label: '幅面高度', unit: 'mm' },
+      { key: 'sizingAgentId' as const, label: '纸药ID', unit: '' },
+    ]).map(({ key, label, unit }) => {
+      const oldVal = (lastConfig as any)[key];
+      const newVal = (batch.configSnapshot as any)[key];
+      const oldStr = String(oldVal ?? '-');
+      const newStr = String(newVal ?? '-');
+      const changed = oldStr !== newStr;
+      const diffPct = typeof oldVal === 'number' && typeof newVal === 'number' && oldVal !== 0
+        ? ((newVal - oldVal) / oldVal * 100)
+        : 0;
+      return { key, label, unit, oldVal, newVal, oldStr, newStr, changed, diffPct };
+    }).filter((d) => d.changed);
+  }, [batch, lastConfig]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-400/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="paper-grain relative w-full max-w-2xl overflow-hidden rounded-xl border border-bronze-200 bg-rice-50 shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-bronze-200/60 bg-rice-50/95 backdrop-blur px-6 py-4">
+          <div>
+            <h3 className="font-display text-lg font-semibold flex items-center gap-2">
+              <Eye className="h-5 w-5 text-bronze-500" />
+              版本沉淀预览
+            </h3>
+            <p className="mt-0.5 text-xs text-ink-100">
+              配方「{recipeName}」 · 将从批次 {batch.batchNo} 创建 v{existingVersions.length + 1}.0
+            </p>
+          </div>
+          <button onClick={onClose} className="rounded-md p-1.5 text-ink-100 hover:bg-bronze-100 hover:text-ink-300">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="space-y-5 p-6">
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="rounded-lg border border-bronze-100 bg-white/60 p-3">
+              <div className="text-xs text-ink-100">来源批次</div>
+              <div className="mt-1 font-display font-bold text-ink-300">{batch.batchNo}</div>
+              <div className="mt-0.5 text-[11px] text-ink-100">
+                <Badge tone={batch.qualityLevel === '优' ? 'bamboo' : batch.qualityLevel === '良' ? 'bronze' : batch.qualityLevel === '合格' ? 'rattan' : 'cinnabar'} size="sm">
+                  质量 {batch.qualityLevel}
+                </Badge>
+                <span className="ml-1">{batch.createdAt}</span>
+              </div>
+            </div>
+            <div className="rounded-lg border border-bronze-100 bg-white/60 p-3">
+              <div className="text-xs text-ink-100">将创建版本</div>
+              <div className="mt-1 font-display font-bold text-bamboo-600">v{existingVersions.length + 1}.0</div>
+              <div className="mt-0.5 text-[11px] text-ink-100">
+                前序版本：{lastVersion ? `${lastVersion.version} (${lastVersion.createdAt})` : '首个版本'}
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-ink-200">
+              <Scale className="h-4 w-4 text-bronze-500" />
+              参数差异对比
+              <Badge tone={diffs.length > 0 ? 'cinnabar' : 'bamboo'} size="sm">
+                {diffs.length > 0 ? `${diffs.length} 处变化` : '参数完全一致'}
+              </Badge>
+            </h4>
+            {diffs.length > 0 ? (
+              <div className="overflow-hidden rounded-lg border border-bronze-100">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-bronze-50 text-xs">
+                      <th className="py-2 px-3 text-left font-medium text-ink-100">参数</th>
+                      <th className="py-2 px-3 text-right font-medium text-ink-100">
+                        {lastVersion ? `上一版本 ${lastVersion.version}` : '初始版本'}
+                      </th>
+                      <th className="py-2 px-3 text-right font-medium text-ink-100">
+                        新批次配置
+                      </th>
+                      <th className="py-2 px-3 text-right font-medium text-ink-100">变化</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {diffs.map((d, i) => (
+                      <tr key={d.key} className={i % 2 ? 'bg-white' : 'bg-bronze-50/30'}>
+                        <td className="py-2 px-3 text-ink-200">{d.label}</td>
+                        <td className="py-2 px-3 text-right tabular-nums text-ink-300">
+                          {d.oldStr}{d.unit}
+                        </td>
+                        <td className="py-2 px-3 text-right tabular-nums font-medium text-bronze-600">
+                          {d.newStr}{d.unit}
+                        </td>
+                        <td className={[
+                          'py-2 px-3 text-right tabular-nums font-semibold text-xs',
+                          d.diffPct > 0 ? 'text-bamboo-600' : d.diffPct < 0 ? 'text-rattan-600' : 'text-ink-200',
+                        ].join(' ')}>
+                          {typeof d.oldVal === 'number' && typeof d.newVal === 'number'
+                            ? `${d.diffPct > 0 ? '+' : ''}${d.diffPct.toFixed(1)}%`
+                            : '变更'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-bamboo-200 bg-bamboo-50/50 p-4 text-xs text-bamboo-600 flex items-center gap-2">
+                <CheckCircle className="h-4 w-4" />
+                <span>与上一版本参数完全一致，将作为同参数的另一版本沉淀，用于记录不同时期的工艺探索。</span>
+              </div>
+            )}
+          </div>
+
+          <Field label="版本备注" required>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={3}
+              placeholder="记录此次沉淀的原因、探索方向、观察结果等"
+              className="w-full rounded-lg border border-bronze-200 bg-white/80 px-3 py-2 text-sm outline-none focus:border-bronze-400 focus:ring-2 focus:ring-bronze-100 resize-none"
+            />
+          </Field>
+
+          <div className="rounded-lg border border-bronze-100 bg-rattan-50/40 p-3 text-xs space-y-1">
+            <div className="font-medium text-ink-200 mb-1">即将写入：</div>
+            <div className="text-ink-100">• 版本号 v{existingVersions.length + 1}.0</div>
+            <div className="text-ink-100">• 关联批次 {batch.batchNo}（质量{batch.qualityLevel}）</div>
+            <div className="text-ink-100">• 配置快照：克重 {batch.configSnapshot.targetGrammage}g / 打浆 {batch.configSnapshot.beatingDegree_SR}°SR / 纸药 {batch.configSnapshot.sizingDose_pct}%</div>
+          </div>
+        </div>
+
+        <div className="sticky bottom-0 flex justify-end gap-3 border-t border-bronze-200/60 bg-rice-100/80 backdrop-blur px-6 py-3">
+          <Button variant="secondary" onClick={onClose}>取消</Button>
+          <Button onClick={() => onConfirm(note)}>
+            <Plus className="h-4 w-4" />
+            确认沉淀为 v{existingVersions.length + 1}.0
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function pearson(x: number[], y: number[]): number {
+  const n = x.length;
+  if (n < 2) return 0;
+  const mx = x.reduce((s, v) => s + v, 0) / n;
+  const my = y.reduce((s, v) => s + v, 0) / n;
+  let num = 0, dx = 0, dy = 0;
+  for (let i = 0; i < n; i++) {
+    const a = x[i] - mx, b = y[i] - my;
+    num += a * b; dx += a * a; dy += b * b;
+  }
+  const denom = Math.sqrt(dx * dy);
+  return denom === 0 ? 0 : Math.max(-1, Math.min(1, num / denom));
 }
 
 function BatchDetail({
@@ -427,15 +913,16 @@ function BatchDetail({
             <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink-200">
               <Scale className="h-4 w-4" /> 配比概要
             </h4>
-            <div className="rounded-lg border border-bronze-100 bg-white/50 p-3 text-xs">
-              <div className="grid grid-cols-2 gap-y-2">
-                <div><span className="text-ink-100">纸张类型：</span><span className="font-medium text-ink-300">{batch.configSnapshot.paperType}</span></div>
-                <div><span className="text-ink-100">规格：</span><span className="font-medium text-ink-300 tabular-nums">{batch.configSnapshot.targetWidth_mm}×{batch.configSnapshot.targetHeight_mm}mm</span></div>
-                <div><span className="text-ink-100">打浆度：</span><span className="font-medium text-ink-300 tabular-nums">{batch.configSnapshot.beatingDegree_SR}°SR</span></div>
-                <div><span className="text-ink-100">用水量：</span><span className="font-medium text-ink-300 tabular-nums">{batch.configSnapshot.waterVolume_L} L</span></div>
-                <div><span className="text-ink-100">纸药用量：</span><span className="font-medium text-ink-300 tabular-nums">{batch.configSnapshot.sizingDose_pct}%</span></div>
-                <div><span className="text-ink-100">压榨压力：</span><span className="font-medium text-ink-300 tabular-nums">{batch.configSnapshot.pressPressure_kg}kg / {batch.configSnapshot.pressDuration_min}min</span></div>
-              </div>
+            <div className="space-y-2 rounded-lg border border-bronze-100 bg-white/50 p-3 text-xs">
+              <DetailRow k="纸张用途" v={batch.configSnapshot.paperUse} />
+              <DetailRow k="目标厚度" v={`${batch.configSnapshot.targetThickness_um} μm`} />
+              <DetailRow k="幅面尺寸" v={`${batch.configSnapshot.targetWidth_mm} × ${batch.configSnapshot.targetHeight_mm} mm`} />
+              <DetailRow k="打浆度" v={`${batch.configSnapshot.beatingDegree_SR}°SR`} />
+              <DetailRow k="用水量" v={`${batch.configSnapshot.waterVolume_L} L`} />
+              <DetailRow k="每次入帘浆量" v={`${batch.configSnapshot.perSwingVolume_mL} mL`} />
+              <DetailRow k="纸药用量" v={`${batch.configSnapshot.sizingDose_pct}% (绝干浆计)`} />
+              <DetailRow k="压榨" v={`${batch.configSnapshot.pressPressure_kg}kg / ${batch.configSnapshot.pressDuration_min}min`} />
+              <DetailRow k="晒纸温度" v={`${batch.configSnapshot.dryingTemp_C} °C`} />
               <div className="mt-2 border-t border-bronze-100 pt-2">
                 <div className="mb-1 text-ink-100">纤维配比：</div>
                 <div className="flex flex-wrap gap-1">
@@ -448,9 +935,7 @@ function BatchDetail({
           </div>
 
           <div>
-            <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink-200">
-              <Gauge className="h-4 w-4" /> 质量指标
-            </h4>
+            <h4 className="mb-3 text-sm font-semibold text-ink-200">质量指标</h4>
             <div className="space-y-3">
               <ProgressBar label="匀度评级" value={Math.max(0, 100 - batch.uniformityCV_pct * 4)} variant="uniformity" />
               <ProgressBar label="克重准确性" value={Math.max(0, 100 - Math.abs(batch.actualAvgGrammage - batch.targetGrammage) / batch.targetGrammage * 150)} variant="strength" />
@@ -555,5 +1040,14 @@ function BatchDetail({
         <span>档案完成时间 {batch.createdAt}，可随时从「纸浆配比」页载入此批参数重新抄造，保持品质稳定。</span>
       </div>
     </PaperCard>
+  );
+}
+
+function DetailRow({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex items-center justify-between border-b border-dashed border-bronze-100 pb-1.5 last:border-0 last:pb-0">
+      <span className="text-ink-100">{k}</span>
+      <span className="font-medium text-ink-300 tabular-nums">{v}</span>
+    </div>
   );
 }

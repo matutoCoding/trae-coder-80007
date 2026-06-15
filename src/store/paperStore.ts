@@ -10,7 +10,7 @@ import {
 } from '@/utils/mock';
 import { uid } from '@/utils/calculator';
 
-type RecipeFilter = 'all' | 'recommended' | 'recent' | 'quality';
+type RecipeFilter = 'all' | 'recommended' | 'recent' | 'quality' | 'quality_you' | 'quality_liang' | 'quality_hege' | 'quality_buhege';
 
 interface PaperState {
   fibers: Fiber[];
