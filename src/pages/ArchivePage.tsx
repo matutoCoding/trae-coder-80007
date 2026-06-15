@@ -4,7 +4,7 @@ import {
   Layers, Scale, Gauge, AlertTriangle, CheckCircle, User,
   GitCompare, CheckSquare, Square, ArrowRight, Plus, Hand, Paperclip, Sun,
   BarChart3, LineChart, AlertOctagon, Wind, Sparkles, Eye, ChevronDown, ChevronUp,
-  ListFilter,
+  ListFilter, Beaker,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import PaperCard from '@/components/layout/PaperCard';
@@ -58,6 +58,7 @@ export default function ArchivePage() {
   const [qlFilter, setQlFilter] = useState<string>('全部');
   const [compareMode, setCompareMode] = useState(false);
   const [onlyDiff, setOnlyDiff] = useState(false);
+  const [compareGroupFilter, setCompareGroupFilter] = useState<'all' | 'recipe' | 'process' | 'result'>('all');
   const [selectedPaperType, setSelectedPaperType] = useState<string | null>(null);
   const [expandedPaperTypes, setExpandedPaperTypes] = useState<Set<string>>(new Set());
   const [previewModal, setPreviewModal] = useState<{
@@ -256,6 +257,16 @@ export default function ArchivePage() {
         batches={batches.filter((b) => b.configSnapshot.paperType === selectedPaperType)}
         expandedPaperTypes={expandedPaperTypes}
         onToggleExpand={togglePaperTypeExpand}
+        onDrillToCompare={(abnormalBatch, stableBatch) => {
+          clearCompareBatches();
+          toggleCompareBatch(abnormalBatch.id);
+          if (stableBatch) {
+            toggleCompareBatch(stableBatch.id);
+          }
+          setCompareMode(true);
+          setOnlyDiff(true);
+          setCompareGroupFilter('all');
+        }}
       />
 
       {compareMode && compareBatches.length >= 2 && (
@@ -264,7 +275,29 @@ export default function ArchivePage() {
           subtitle={`${compareBatches[0]?.configSnapshot.paperType} · 共 ${compareBatches.length} 批对比`}
           icon={<GitCompare className="h-5 w-5" />}
           actions={
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1 rounded-lg border border-bronze-200 bg-white/60 p-0.5">
+                {[
+                  { value: 'all' as const, label: '全部' },
+                  { value: 'recipe' as const, label: '配方参数', icon: <Beaker className="h-3 w-3" /> },
+                  { value: 'process' as const, label: '抄造过程', icon: <Hand className="h-3 w-3" /> },
+                  { value: 'result' as const, label: '检测结果', icon: <Scale className="h-3 w-3" /> },
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setCompareGroupFilter(opt.value)}
+                    className={[
+                      'flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium transition-all',
+                      compareGroupFilter === opt.value
+                        ? 'bg-gradient-to-br from-bronze-500 to-bronze-600 text-white shadow-sm'
+                        : 'text-ink-200 hover:bg-bronze-50',
+                    ].join(' ')}
+                  >
+                    {opt.icon}
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
               <button
                 onClick={() => setOnlyDiff(!onlyDiff)}
                 className={[
@@ -303,26 +336,40 @@ export default function ArchivePage() {
               </thead>
               <tbody>
                 {[
-                  { label: '目标克重', key: 'targetGrammage', unit: 'g/m²', get: (b: Batch) => b.targetGrammage },
+                  { label: '目标克重', key: 'targetGrammage', unit: 'g/m²', get: (b: Batch) => b.targetGrammage, group: 'recipe' as const },
                   {
                     label: '实际克重', key: 'actualGrammage', unit: 'g/m²',
                     get: (b: Batch) => b.actualAvgGrammage.toFixed(1),
                     highlight: true,
                     bestMode: 'closest-to-target' as const,
                     targetGetter: (b: Batch) => b.targetGrammage,
+                    group: 'result' as const,
                   },
-                  { label: '匀度 CV', key: 'cv', unit: '%', get: (b: Batch) => b.uniformityCV_pct.toFixed(2), highlight: true, lowerIsBetter: true },
-                  { label: '最大偏差', key: 'maxDev', unit: '%', get: (b: Batch) => b.maxDeviation_pct.toFixed(1), highlight: true, lowerIsBetter: true },
-                  { label: '克重偏差率', key: 'gramDev', unit: '%', get: (b: Batch) => `${(Math.abs(b.actualAvgGrammage - b.targetGrammage) / b.targetGrammage * 100).toFixed(2)}`, highlight: true, lowerIsBetter: true },
-                  { label: '荡料次数(目标)', key: 'targetSwing', unit: '次', get: (b: Batch) => b.targetSwingCount },
-                  { label: '纸药用量', key: 'sizingDose', unit: '%', get: (b: Batch) => b.configSnapshot.sizingDose_pct },
-                  { label: '打浆度', key: 'beating', unit: '°SR', get: (b: Batch) => b.configSnapshot.beatingDegree_SR },
-                  { label: '压榨压力', key: 'pressPressure', unit: 'kg', get: (b: Batch) => b.configSnapshot.pressPressure_kg },
-                  { label: '压榨时长', key: 'pressDuration', unit: 'min', get: (b: Batch) => b.configSnapshot.pressDuration_min },
-                  { label: '晒纸温度', key: 'dryingTemp', unit: '°C', get: (b: Batch) => b.configSnapshot.dryingTemp_C },
-                  { label: '质量等级', key: 'quality', unit: '', get: (b: Batch) => b.qualityLevel, highlight: true, higherIsBetter: true },
+                  { label: '匀度 CV', key: 'cv', unit: '%', get: (b: Batch) => b.uniformityCV_pct.toFixed(2), highlight: true, lowerIsBetter: true, group: 'result' as const },
+                  { label: '最大偏差', key: 'maxDev', unit: '%', get: (b: Batch) => b.maxDeviation_pct.toFixed(1), highlight: true, lowerIsBetter: true, group: 'result' as const },
+                  { label: '克重偏差率', key: 'gramDev', unit: '%', get: (b: Batch) => `${(Math.abs(b.actualAvgGrammage - b.targetGrammage) / b.targetGrammage * 100).toFixed(2)}`, highlight: true, lowerIsBetter: true, group: 'result' as const },
+                  { label: '荡料次数(目标)', key: 'targetSwing', unit: '次', get: (b: Batch) => b.targetSwingCount, group: 'recipe' as const },
+                  { label: '实际荡料次数', key: 'actualSwing', unit: '次', get: (b: Batch) => b.papermakingRecord?.actualSwingCount ?? '—', group: 'process' as const },
+                  { label: '入帘手感', key: 'feel', unit: '', get: (b: Batch) => b.papermakingRecord?.feelLevel ?? '—', group: 'process' as const },
+                  { label: '搅浆次数', key: 'stirCount', unit: '次', get: (b: Batch) => b.papermakingRecord?.stirCount ?? '—', group: 'process' as const },
+                  { label: '揭纸情况', key: 'release', unit: '', get: (b: Batch) => b.papermakingRecord?.releaseSituation ?? '—', group: 'process' as const },
+                  { label: '纤维种类数', key: 'fiberCount', unit: '种', get: (b: Batch) => b.configSnapshot.fiberMixture.length, group: 'recipe' as const },
+                  { label: '纸药种类', key: 'sizingName', unit: '', get: (b: Batch) => {
+                    const id = b.configSnapshot.sizingAgentId;
+                    const agents = usePaperStore.getState().sizingAgents;
+                    return agents.find((a) => a.id === id)?.name || id.slice(-4);
+                  }, group: 'recipe' as const },
+                  { label: '纸药用量', key: 'sizingDose', unit: '%', get: (b: Batch) => b.configSnapshot.sizingDose_pct, group: 'recipe' as const },
+                  { label: '打浆度', key: 'beating', unit: '°SR', get: (b: Batch) => b.configSnapshot.beatingDegree_SR, group: 'recipe' as const },
+                  { label: '入帘浆量', key: 'perSwing', unit: 'mL', get: (b: Batch) => b.configSnapshot.perSwingVolume_mL, group: 'recipe' as const },
+                  { label: '用水量', key: 'water', unit: 'L', get: (b: Batch) => b.configSnapshot.waterVolume_L, group: 'recipe' as const },
+                  { label: '压榨压力', key: 'pressPressure', unit: 'kg', get: (b: Batch) => b.configSnapshot.pressPressure_kg, group: 'recipe' as const },
+                  { label: '压榨时长', key: 'pressDuration', unit: 'min', get: (b: Batch) => b.configSnapshot.pressDuration_min, group: 'recipe' as const },
+                  { label: '晒纸温度', key: 'dryingTemp', unit: '°C', get: (b: Batch) => b.configSnapshot.dryingTemp_C, group: 'recipe' as const },
+                  { label: '质量等级', key: 'quality', unit: '', get: (b: Batch) => b.qualityLevel, highlight: true, higherIsBetter: true, group: 'result' as const },
                 ]
                 .filter((row) => {
+                  if (compareGroupFilter !== 'all' && row.group !== compareGroupFilter) return false;
                   if (!onlyDiff) return true;
                   const values = compareBatches.map((b) => String(row.get(b)));
                   const unique = new Set(values);
@@ -538,6 +585,7 @@ export default function ArchivePage() {
 function StabilityDashboard({
   summary, selectedPaperType, onSelectPaperType, impactAnalysis, batches,
   expandedPaperTypes, onToggleExpand,
+  onDrillToCompare,
 }: {
   summary: PaperTypeSummary[];
   selectedPaperType: string | null;
@@ -546,6 +594,7 @@ function StabilityDashboard({
   batches: Batch[];
   expandedPaperTypes: Set<string>;
   onToggleExpand: (paperType: string) => void;
+  onDrillToCompare: (abnormalBatch: Batch, stableBatch?: Batch) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
 
@@ -675,6 +724,7 @@ function StabilityDashboard({
                           const hasReleaseIssue = b.papermakingRecord && (b.papermakingRecord.releaseSituation === '粘连' || b.papermakingRecord.releaseSituation === '破损');
                           const cvPct = Math.min(100, (b.uniformityCV_pct / maxCV) * 100);
                           const gramDev = Math.abs(b.actualAvgGrammage - b.targetGrammage) / b.targetGrammage * 100;
+                          const stableBatch = s.recentBatches.find((x) => x.id !== b.id && x.maxDeviation_pct <= x.tolerance_pct && x.uniformityCV_pct < 8 && QUALITY_SCORE[x.qualityLevel] >= 3);
                           return (
                             <div key={b.id} className="group">
                               <div className="mb-0.5 flex items-center justify-between text-[10px]">
@@ -697,6 +747,20 @@ function StabilityDashboard({
                                   <Badge tone={
                                     b.qualityLevel === '优' ? 'bamboo' : b.qualityLevel === '良' ? 'bronze' : b.qualityLevel === '合格' ? 'rattan' : 'cinnabar'
                                   } size="sm" className="h-4">{b.qualityLevel}</Badge>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onDrillToCompare(b, stableBatch);
+                                    }}
+                                    className={[
+                                      'ml-1 rounded border px-1.5 py-0.5 text-[9px] font-medium transition-all opacity-0 group-hover:opacity-100',
+                                      stableBatch ? 'border-bamboo-200 bg-bamboo-50 text-bamboo-600 hover:bg-bamboo-100' : 'border-bronze-200 bg-bronze-50 text-bronze-500 hover:bg-bronze-100 opacity-100',
+                                    ].join(' ')}
+                                    title={stableBatch ? '与最近稳定批次对比' : '无可用稳定批次对比'}
+                                  >
+                                    <GitCompare className="h-2.5 w-2.5 inline mr-0.5" />
+                                    {stableBatch ? '对比' : '选对比'}
+                                  </button>
                                 </div>
                               </div>
                               <div className="relative h-4 overflow-hidden rounded bg-bronze-50">

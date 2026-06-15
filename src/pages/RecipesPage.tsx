@@ -241,6 +241,75 @@ export default function RecipesPage() {
     const sortedBatches = [...versionBatches].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const lastUsed = sortedBatches[0];
 
+    let trend: 'improving' | 'worsening' | 'stable' | 'volatile' = 'stable';
+    let trendReason = '';
+    let recommendSuggestion = '';
+
+    if (sortedBatches.length >= 3) {
+      const recent = sortedBatches.slice(0, Math.min(5, sortedBatches.length));
+      const recentQuality = recent.map((b) => QUALITY_SCORE[b.qualityLevel] || 0);
+      const recentCV = recent.map((b) => b.uniformityCV_pct);
+
+      const firstHalf = recentQuality.slice(0, Math.ceil(recentQuality.length / 2));
+      const secondHalf = recentQuality.slice(Math.ceil(recentQuality.length / 2));
+      const avgFirst = firstHalf.reduce((s, v) => s + v, 0) / firstHalf.length;
+      const avgSecond = secondHalf.reduce((s, v) => s + v, 0) / secondHalf.length;
+
+      const cvFirst = recentCV.slice(0, Math.ceil(recentCV.length / 2)).reduce((s, v) => s + v, 0) / Math.ceil(recentCV.length / 2);
+      const cvSecond = recentCV.slice(Math.ceil(recentCV.length / 2)).reduce((s, v) => s + v, 0) / (recentCV.length - Math.ceil(recentCV.length / 2));
+
+      const qualityStd = Math.sqrt(recentQuality.reduce((s, v) => s + Math.pow(v - (recentQuality.reduce((a, b) => a + b, 0) / recentQuality.length), 2), 0) / recentQuality.length);
+      const cvStd = Math.sqrt(recentCV.reduce((s, v) => s + Math.pow(v - (recentCV.reduce((a, b) => a + b, 0) / recentCV.length), 2), 0) / recentCV.length);
+
+      if (qualityStd > 1.0 || cvStd > 3) {
+        trend = 'volatile';
+        trendReason = `最近${recent.length}批品质波动较大，品质标准差${qualityStd.toFixed(2)}，CV标准差${cvStd.toFixed(2)}%`;
+      } else if (avgSecond >= avgFirst + 0.5 && cvSecond <= cvFirst - 2) {
+        trend = 'improving';
+        trendReason = `近${secondHalf.length}批对比前${firstHalf.length}批，品质平均提升${(avgSecond - avgFirst).toFixed(1)}分，CV下降${(cvFirst - cvSecond).toFixed(1)}%`;
+      } else if (avgSecond <= avgFirst - 0.5 && cvSecond >= cvFirst + 2) {
+        trend = 'worsening';
+        trendReason = `近${secondHalf.length}批对比前${firstHalf.length}批，品质平均下降${(avgFirst - avgSecond).toFixed(1)}分，CV上升${(cvSecond - cvFirst).toFixed(1)}%`;
+      } else {
+        trend = 'stable';
+        trendReason = `最近${recent.length}批品质稳定，平均${avgLevel}，CV波动${cvStd.toFixed(2)}%`;
+      }
+
+      if (trend === 'improving' && avgQuality >= 3) {
+        recommendSuggestion = '品质持续提升，建议保留为推荐版本';
+      } else if (trend === 'stable' && avgQuality >= 3) {
+        recommendSuggestion = '表现稳定可靠，适合作为推荐版本';
+      } else if (trend === 'worsening') {
+        recommendSuggestion = '近期表现下滑，建议检查工艺参数或更换推荐版本';
+      } else if (trend === 'volatile') {
+        recommendSuggestion = '波动较大，需排查打浆度、纸药用量等关键参数后再考虑推荐';
+      } else if (avgQuality >= 3) {
+        recommendSuggestion = '整体表现良好，可考虑设为推荐';
+      } else {
+        recommendSuggestion = '质量一般，建议继续验证后再推荐';
+      }
+    } else if (sortedBatches.length === 2) {
+      const q1 = QUALITY_SCORE[sortedBatches[0].qualityLevel] || 0;
+      const q2 = QUALITY_SCORE[sortedBatches[1].qualityLevel] || 0;
+      if (q1 > q2) {
+        trend = 'improving';
+        trendReason = '仅2批数据，后一批品质优于前一批';
+        recommendSuggestion = '数据较少，初步呈提升趋势，建议继续验证';
+      } else if (q1 < q2) {
+        trend = 'worsening';
+        trendReason = '仅2批数据，后一批品质不如前一批';
+        recommendSuggestion = '数据较少，初步呈下滑趋势，建议关注后续验证';
+      } else {
+        trend = 'stable';
+        trendReason = '仅2批数据，两次结果一致';
+        recommendSuggestion = '数据较少，表现平稳，建议继续验证';
+      }
+    } else {
+      trend = 'stable';
+      trendReason = '仅1批数据，不足以判断趋势';
+      recommendSuggestion = '数据不足，建议多批验证后再考虑推荐';
+    }
+
     return {
       batchCount: versionBatches.length,
       batches: sortedBatches,
@@ -249,6 +318,9 @@ export default function RecipesPage() {
       avgCV,
       avgGramDev,
       lastUsedBatch: lastUsed,
+      trend,
+      trendReason,
+      recommendSuggestion,
     };
   };
 
@@ -481,14 +553,23 @@ export default function RecipesPage() {
                                   {isRecommended && <Badge tone="bamboo" size="sm">推荐版本</Badge>}
                                   {refBatch && <Badge tone="bronze" size="sm">来自 {refBatch.batchNo}</Badge>}
                                   {stats && (
-                                    <Badge
-                                      tone={stats.avgLevel === '优' ? 'bamboo' : stats.avgLevel === '良' ? 'bronze' : stats.avgLevel === '合格' ? 'rattan' : 'cinnabar'}
-                                      size="sm"
-                                      className="flex items-center gap-1"
-                                    >
-                                      <CheckCircle className="h-2.5 w-2.5" />
-                                      平均 {stats.avgLevel} ({stats.batchCount}批)
-                                    </Badge>
+                                    <>
+                                      <Badge
+                                        tone={stats.avgLevel === '优' ? 'bamboo' : stats.avgLevel === '良' ? 'bronze' : stats.avgLevel === '合格' ? 'rattan' : 'cinnabar'}
+                                        size="sm"
+                                        className="flex items-center gap-1"
+                                      >
+                                        <CheckCircle className="h-2.5 w-2.5" />
+                                        平均 {stats.avgLevel} ({stats.batchCount}批)
+                                      </Badge>
+                                      <Badge
+                                        tone={stats.trend === 'improving' ? 'bamboo' : stats.trend === 'worsening' ? 'cinnabar' : stats.trend === 'volatile' ? 'rattan' : 'bronze'}
+                                        size="sm"
+                                        className="flex items-center gap-1"
+                                      >
+                                        {stats.trend === 'improving' ? '↑ 变稳' : stats.trend === 'worsening' ? '↓ 变差' : stats.trend === 'volatile' ? '~ 波动' : '→ 稳定'}
+                                      </Badge>
+                                    </>
                                   )}
                                 </div>
                                 <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-ink-100">
@@ -521,6 +602,69 @@ export default function RecipesPage() {
 
                           {isActive && stats && (
                             <div className="border-t border-bronze-100 bg-white/70 p-3 space-y-3">
+                              <div className={[
+                                'rounded-lg border-2 p-3',
+                                stats.trend === 'improving' ? 'border-bamboo-300 bg-gradient-to-r from-bamboo-50 to-rattan-50' :
+                                stats.trend === 'worsening' ? 'border-cinnabar-300 bg-gradient-to-r from-cinnabar-50 to-rattan-50' :
+                                stats.trend === 'volatile' ? 'border-rattan-300 bg-gradient-to-r from-rattan-50 to-bronze-50' :
+                                'border-bronze-300 bg-gradient-to-r from-bronze-50 to-rattan-50',
+                              ].join(' ')}>
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <span className={[
+                                        'font-display font-bold',
+                                        stats.trend === 'improving' ? 'text-bamboo-600' :
+                                        stats.trend === 'worsening' ? 'text-cinnabar-500' :
+                                        stats.trend === 'volatile' ? 'text-rattan-600' :
+                                        'text-bronze-600',
+                                      ].join(' ')}>
+                                        {stats.trend === 'improving' ? '↑ 趋势：正在变稳' :
+                                         stats.trend === 'worsening' ? '↓ 趋势：逐步变差' :
+                                         stats.trend === 'volatile' ? '~ 趋势：波动较大' :
+                                         '→ 趋势：表现稳定'}
+                                      </span>
+                                      {isRecommended && (
+                                        <Badge tone="bamboo" size="sm" className="flex items-center gap-1">
+                                          <Star className="h-3 w-3 fill-current" /> 当前推荐
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <div className="text-xs text-ink-200">{stats.trendReason}</div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    {!isRecommended && (
+                                      <Button
+                                        size="sm"
+                                        variant={stats.trend === 'improving' || stats.trend === 'stable' ? 'success' : 'secondary'}
+                                        icon={<Star className="h-3.5 w-3.5" />}
+                                        onClick={(e) => { e.stopPropagation(); handleSetRecommended(selected, v.id); }}
+                                      >
+                                        设为推荐
+                                      </Button>
+                                    )}
+                                    {isRecommended && (
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="text-bamboo-600"
+                                        icon={<CheckCircle className="h-3.5 w-3.5" />}
+                                        disabled
+                                      >
+                                        已推荐
+                                      </Button>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="mt-2 pt-2 border-t border-bronze-200/50 text-xs text-ink-100 flex items-start gap-1.5">
+                                  <Sparkles className="h-3.5 w-3.5 text-bronze-500 shrink-0 mt-0.5" />
+                                  <span>
+                                    <span className="font-semibold text-ink-200">推荐建议：</span>
+                                    {stats.recommendSuggestion}
+                                  </span>
+                                </div>
+                              </div>
+
                               <div className="grid grid-cols-2 gap-3 md:grid-cols-4 text-xs">
                                 <div className="rounded-lg border border-bamboo-100 bg-bamboo-50/40 p-2.5">
                                   <div className="text-ink-100 flex items-center gap-1"><FileText className="h-3 w-3" />关联批次</div>
@@ -767,12 +911,26 @@ export default function RecipesPage() {
 }
 
 function isSameConfig(a: any, b: any): boolean {
-  const KEYS = [
+  const BASIC_KEYS = [
     'targetGrammage', 'beatingDegree_SR', 'sizingDose_pct',
     'pressPressure_kg', 'pressDuration_min', 'dryingTemp_C',
     'perSwingVolume_mL', 'waterVolume_L', 'targetWidth_mm', 'targetHeight_mm',
+    'targetThickness_um', 'paperUse', 'paperType',
+    'sizingAgentId', 'currentTolerance_pct',
   ];
-  return KEYS.every((k) => String(a[k]) === String(b[k]));
+  const basicMatch = BASIC_KEYS.every((k) => String(a[k]) === String(b[k]));
+  if (!basicMatch) return false;
+
+  const aFibers = a.fiberMixture || [];
+  const bFibers = b.fiberMixture || [];
+  if (aFibers.length !== bFibers.length) return false;
+  const fiberMatch = aFibers.every((fa: any, i: number) => {
+    const fb = bFibers[i];
+    return fa.fiberId === fb.fiberId && Math.abs(fa.ratio_pct - fb.ratio_pct) < 0.1;
+  });
+  if (!fiberMatch) return false;
+
+  return true;
 }
 
 function Row({ k, v }: { k: string; v: string }) {
