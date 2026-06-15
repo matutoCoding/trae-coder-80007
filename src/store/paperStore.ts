@@ -27,6 +27,7 @@ interface PaperState {
   papermakingRecord: PapermakingRecord;
   compareBatchIds: string[];
   recipeFilter: RecipeFilter;
+  pendingRecipeVersionToOpen: { recipeId: string; versionId: string } | null;
 
   setRatioConfig: (p: Partial<RatioConfig>) => void;
   resetRatioConfig: () => void;
@@ -63,6 +64,8 @@ interface PaperState {
   clearRatioToThicknessPayload: () => void;
   setPapermakingRecord: (p: Partial<PapermakingRecord>) => void;
   resetPapermakingRecord: () => void;
+  setPendingRecipeVersionToOpen: (p: { recipeId: string; versionId: string } | null) => void;
+  clearPendingRecipeVersionToOpen: () => void;
 }
 
 export const usePaperStore = create<PaperState>()(
@@ -81,6 +84,7 @@ export const usePaperStore = create<PaperState>()(
       papermakingRecord: defaultPapermakingRecord,
       compareBatchIds: [],
       recipeFilter: 'all',
+      pendingRecipeVersionToOpen: null,
 
       setRatioConfig: (p) => set((s) => ({ ratioConfig: { ...s.ratioConfig, ...p } })),
       resetRatioConfig: () => set({ ratioConfig: defaultRatioConfig }),
@@ -152,6 +156,7 @@ export const usePaperStore = create<PaperState>()(
       addRecipeVersion: (recipeId, note, fromBatchId) =>
         set((s) => {
           const now = new Date().toISOString().slice(0, 10);
+          let newVersionId = '';
           const recipes = s.recipes.map((r) => {
             if (r.id !== recipeId) return r;
             const batch = fromBatchId ? s.batches.find((b) => b.id === fromBatchId) : null;
@@ -165,9 +170,10 @@ export const usePaperStore = create<PaperState>()(
               createdAt: now,
               qualityRefBatchId: fromBatchId || undefined,
             };
+            newVersionId = newVersion.id;
             return { ...r, versions: [...r.versions, newVersion] };
           });
-          return { recipes };
+          return { recipes, pendingRecipeVersionToOpen: { recipeId, versionId: newVersionId } };
         }),
       setRecommendedVersion: (recipeId, versionId) =>
         set((s) => ({
@@ -220,6 +226,8 @@ export const usePaperStore = create<PaperState>()(
       setPapermakingRecord: (p) =>
         set((s) => ({ papermakingRecord: { ...s.papermakingRecord, ...p } })),
       resetPapermakingRecord: () => set({ papermakingRecord: defaultPapermakingRecord }),
+      setPendingRecipeVersionToOpen: (p) => set({ pendingRecipeVersionToOpen: p }),
+      clearPendingRecipeVersionToOpen: () => set({ pendingRecipeVersionToOpen: null }),
     }),
     {
       name: 'handmade-paper-store-v2',

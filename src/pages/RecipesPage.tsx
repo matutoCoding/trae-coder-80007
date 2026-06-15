@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   BookOpen, Search, Tag, Plus, X, Trash2, Edit2, Download,
   Sparkles, Target, Scale, Beaker, Clock, ChevronRight,
@@ -51,6 +51,8 @@ export default function RecipesPage() {
   const recipeFilter = usePaperStore((s) => s.recipeFilter);
   const setRecipeFilter = usePaperStore((s) => s.setRecipeFilter);
   const batches = usePaperStore((s) => s.batches);
+  const pendingRecipeVersionToOpen = usePaperStore((s) => s.pendingRecipeVersionToOpen);
+  const clearPendingRecipeVersionToOpen = usePaperStore((s) => s.clearPendingRecipeVersionToOpen);
   const navigate = useNavigate();
 
   const [kw, setKw] = useState('');
@@ -60,6 +62,17 @@ export default function RecipesPage() {
   const [editing, setEditing] = useState<EditingRecipe | null>(null);
   const [tagInput, setTagInput] = useState('');
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (pendingRecipeVersionToOpen) {
+      setSelectedId(pendingRecipeVersionToOpen.recipeId);
+      setSelectedVersionId(pendingRecipeVersionToOpen.versionId);
+      setRecipeFilter('all');
+      setCatFilter('全部');
+      setKw('');
+      clearPendingRecipeVersionToOpen();
+    }
+  }, [pendingRecipeVersionToOpen, clearPendingRecipeVersionToOpen, setRecipeFilter]);
 
   const categories = useMemo(() => {
     const set = new Set(recipes.map((r) => r.category));

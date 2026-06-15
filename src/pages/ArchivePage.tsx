@@ -1,10 +1,12 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   FileArchive, Search, Filter, Calendar, FileText, Trash2, ChevronRight, X,
   Layers, Scale, Gauge, AlertTriangle, CheckCircle, User,
   GitCompare, CheckSquare, Square, ArrowRight, Plus, Hand, Paperclip, Sun,
   BarChart3, LineChart, AlertOctagon, Wind, Sparkles, Eye, ChevronDown, ChevronUp,
+  ListFilter,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import PaperCard from '@/components/layout/PaperCard';
 import Button from '@/components/ui/Button';
 import Field, { TextInput, Select } from '@/components/ui/Field';
@@ -24,6 +26,8 @@ interface PaperTypeSummary {
   avgGrammageDeviation_pct: number;
   lastBatchDate: string;
   qualityDist: Record<string, number>;
+  recentBatches: Batch[];
+  batches: Batch[];
 }
 
 const QUALITY_SCORE: Record<string, number> = { '优': 4, '良': 3, '合格': 2, '不合格': 1 };
@@ -48,17 +52,29 @@ export default function ArchivePage() {
   const clearCompareBatches = usePaperStore((s) => s.clearCompareBatches);
   const addRecipeVersion = usePaperStore((s) => s.addRecipeVersion);
   const recipes = usePaperStore((s) => s.recipes);
+  const navigate = useNavigate();
 
   const [kw, setKw] = useState('');
   const [qlFilter, setQlFilter] = useState<string>('全部');
   const [compareMode, setCompareMode] = useState(false);
+  const [onlyDiff, setOnlyDiff] = useState(false);
   const [selectedPaperType, setSelectedPaperType] = useState<string | null>(null);
+  const [expandedPaperTypes, setExpandedPaperTypes] = useState<Set<string>>(new Set());
   const [previewModal, setPreviewModal] = useState<{
     open: boolean;
     batchId: string;
     recipeId: string;
     recipeName: string;
   } | null>(null);
+
+  const togglePaperTypeExpand = (paperType: string) => {
+    setExpandedPaperTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(paperType)) next.delete(paperType);
+      else next.add(paperType);
+      return next;
+    });
+  };
 
   const filtered = useMemo(() => {
     return batches.filter((b) => {
@@ -101,6 +117,8 @@ export default function ArchivePage() {
         avgGrammageDeviation_pct: avgGramDev,
         lastBatchDate: sorted[0]?.createdAt || '',
         qualityDist,
+        recentBatches: recent,
+        batches: sorted,
       };
     }).sort((a, b) => b.batchCount - a.batchCount);
   }, [batches]);
@@ -182,7 +200,9 @@ export default function ArchivePage() {
     if (!previewModal) return;
     addRecipeVersion(previewModal.recipeId, note || '', previewModal.batchId);
     setPreviewModal(null);
-    alert('版本沉淀成功！前往配方库查看新版本');
+    setTimeout(() => {
+      navigate('/recipes');
+    }, 200);
   };
 
   const canAddToCompare = (b: Batch) => {
@@ -234,6 +254,8 @@ export default function ArchivePage() {
         onSelectPaperType={setSelectedPaperType}
         impactAnalysis={impactAnalysis}
         batches={batches.filter((b) => b.configSnapshot.paperType === selectedPaperType)}
+        expandedPaperTypes={expandedPaperTypes}
+        onToggleExpand={togglePaperTypeExpand}
       />
 
       {compareMode && compareBatches.length >= 2 && (
@@ -242,7 +264,21 @@ export default function ArchivePage() {
           subtitle={`${compareBatches[0]?.configSnapshot.paperType} · 共 ${compareBatches.length} 批对比`}
           icon={<GitCompare className="h-5 w-5" />}
           actions={
-            <Button variant="ghost" size="sm" onClick={clearCompareBatches}>清空选择</Button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setOnlyDiff(!onlyDiff)}
+                className={[
+                  'flex items-center gap-1.5 rounded-lg border-2 px-3 py-1.5 text-xs font-medium transition-all',
+                  onlyDiff
+                    ? 'border-bronze-500 bg-gradient-to-br from-bronze-50 to-rattan-100 text-bronze-700'
+                    : 'border-bronze-200 bg-white/60 text-ink-200 hover:border-bronze-300 hover:bg-white',
+                ].join(' ')}
+              >
+                <ListFilter className="h-3.5 w-3.5" />
+                只看差异项
+              </button>
+              <Button variant="ghost" size="sm" onClick={clearCompareBatches}>清空选择</Button>
+            </div>
           }
         >
           <div className="overflow-x-auto">
@@ -285,7 +321,14 @@ export default function ArchivePage() {
                   { label: '压榨时长', key: 'pressDuration', unit: 'min', get: (b: Batch) => b.configSnapshot.pressDuration_min },
                   { label: '晒纸温度', key: 'dryingTemp', unit: '°C', get: (b: Batch) => b.configSnapshot.dryingTemp_C },
                   { label: '质量等级', key: 'quality', unit: '', get: (b: Batch) => b.qualityLevel, highlight: true, higherIsBetter: true },
-                ].map((row, ri) => {
+                ]
+                .filter((row) => {
+                  if (!onlyDiff) return true;
+                  const values = compareBatches.map((b) => String(row.get(b)));
+                  const unique = new Set(values);
+                  return unique.size > 1;
+                })
+                .map((row, ri) => {
                   const values = compareBatches.map((b) => row.get(b));
                   const targets = 'targetGetter' in row ? compareBatches.map((b) => (row as any).targetGetter(b)) : null;
                   const numValues = values.map((v) => typeof v === 'number' ? v : parseFloat(v as string));
@@ -494,12 +537,15 @@ export default function ArchivePage() {
 
 function StabilityDashboard({
   summary, selectedPaperType, onSelectPaperType, impactAnalysis, batches,
+  expandedPaperTypes, onToggleExpand,
 }: {
   summary: PaperTypeSummary[];
   selectedPaperType: string | null;
   onSelectPaperType: (p: string | null) => void;
   impactAnalysis: any;
   batches: Batch[];
+  expandedPaperTypes: Set<string>;
+  onToggleExpand: (paperType: string) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
 
@@ -525,6 +571,7 @@ function StabilityDashboard({
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
             {summary.map((s) => {
               const active = selectedPaperType === s.paperType;
+              const isExpanded = expandedPaperTypes.has(s.paperType);
               const stableScore = Math.max(0, 100
                 - s.avgCV * 4
                 - s.avgMaxDev * 2
@@ -532,67 +579,169 @@ function StabilityDashboard({
                 - s.avgGrammageDeviation_pct * 3
                 - s.releaseIssues * 10);
               const grade = stableScore >= 80 ? '稳定' : stableScore >= 60 ? '一般' : '波动';
+              const maxCV = Math.max(...s.recentBatches.map((b) => b.uniformityCV_pct), 10);
               return (
-                <button
+                <div
                   key={s.paperType}
-                  onClick={() => onSelectPaperType(active ? null : s.paperType)}
                   className={[
-                    'rounded-xl border p-4 text-left transition-all',
-                    active
+                    'rounded-xl border transition-all overflow-hidden',
+                    active || isExpanded
                       ? 'border-bronze-500 bg-gradient-to-br from-bronze-50 to-rattan-100/50 shadow-paper'
                       : 'border-bronze-100 bg-white/60 hover:border-bronze-300 hover:bg-white hover:shadow-paper',
                   ].join(' ')}
                 >
-                  <div className="mb-3 flex items-start justify-between">
-                    <div>
-                      <div className="font-display font-bold text-lg text-ink-300">{s.paperType}</div>
-                      <div className="text-xs text-ink-100 mt-0.5">
-                        近 {s.batchCount} 批 · {s.lastBatchDate}
+                  <button
+                    onClick={() => onSelectPaperType(active ? null : s.paperType)}
+                    className="w-full p-4 text-left"
+                  >
+                    <div className="mb-3 flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="font-display font-bold text-lg text-ink-300">{s.paperType}</div>
+                        <div className="text-xs text-ink-100 mt-0.5">
+                          近 {s.batchCount} 批 · {s.lastBatchDate}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 ml-2">
+                        <Badge tone={grade === '稳定' ? 'bamboo' : grade === '一般' ? 'bronze' : 'cinnabar'} size="sm">
+                          {grade}
+                        </Badge>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onToggleExpand(s.paperType); }}
+                          className={[
+                            'rounded-md border-2 p-1 transition-all',
+                            isExpanded ? 'bg-bronze-500 border-bronze-500 text-white' : 'bg-white border-bronze-200 text-ink-100 hover:border-bronze-400 hover:text-bronze-500',
+                          ].join(' ')}
+                          title={isExpanded ? '收起批次详情' : '展开批次详情'}
+                        >
+                          {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                        </button>
                       </div>
                     </div>
-                    <Badge tone={grade === '稳定' ? 'bamboo' : grade === '一般' ? 'bronze' : 'cinnabar'} size="sm">
-                      {grade}
-                    </Badge>
-                  </div>
-                  <ProgressBar label="稳定性评分" value={Math.round(stableScore)} max={100} variant="uniformity" />
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
-                    <div className="rounded bg-bronze-50/70 p-2">
-                      <div className="text-ink-100 flex items-center gap-1"><LineChart className="h-3 w-3" />平均 CV</div>
-                      <div className="mt-0.5 font-semibold tabular-nums text-ink-300">{s.avgCV.toFixed(2)}%</div>
+                    <ProgressBar label="稳定性评分" value={Math.round(stableScore)} max={100} variant="uniformity" />
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="rounded bg-bronze-50/70 p-2">
+                        <div className="text-ink-100 flex items-center gap-1"><LineChart className="h-3 w-3" />平均 CV</div>
+                        <div className="mt-0.5 font-semibold tabular-nums text-ink-300">{s.avgCV.toFixed(2)}%</div>
+                      </div>
+                      <div className="rounded bg-bronze-50/70 p-2">
+                        <div className="text-ink-100 flex items-center gap-1"><Gauge className="h-3 w-3" />最大偏差</div>
+                        <div className="mt-0.5 font-semibold tabular-nums text-ink-300">{s.avgMaxDev.toFixed(1)}%</div>
+                      </div>
+                      <div className="rounded bg-bronze-50/70 p-2">
+                        <div className="text-ink-100 flex items-center gap-1"><AlertOctagon className="h-3 w-3" />超差批次</div>
+                        <div className={[
+                          'mt-0.5 font-semibold tabular-nums',
+                          s.overToleranceCount === 0 ? 'text-bamboo-600' : s.overToleranceCount <= 2 ? 'text-bronze-500' : 'text-cinnabar-500',
+                        ].join(' ')}>{s.overToleranceCount}/{s.batchCount}</div>
+                      </div>
+                      <div className="rounded bg-bronze-50/70 p-2">
+                        <div className="text-ink-100 flex items-center gap-1"><Wind className="h-3 w-3" />揭纸问题</div>
+                        <div className={[
+                          'mt-0.5 font-semibold tabular-nums',
+                          s.releaseIssues === 0 ? 'text-bamboo-600' : 'text-cinnabar-500',
+                        ].join(' ')}>{s.releaseIssues} 次</div>
+                      </div>
                     </div>
-                    <div className="rounded bg-bronze-50/70 p-2">
-                      <div className="text-ink-100 flex items-center gap-1"><Gauge className="h-3 w-3" />最大偏差</div>
-                      <div className="mt-0.5 font-semibold tabular-nums text-ink-300">{s.avgMaxDev.toFixed(1)}%</div>
-                    </div>
-                    <div className="rounded bg-bronze-50/70 p-2">
-                      <div className="text-ink-100 flex items-center gap-1"><AlertOctagon className="h-3 w-3" />超差批次</div>
-                      <div className={[
-                        'mt-0.5 font-semibold tabular-nums',
-                        s.overToleranceCount === 0 ? 'text-bamboo-600' : s.overToleranceCount <= 2 ? 'text-bronze-500' : 'text-cinnabar-500',
-                      ].join(' ')}>{s.overToleranceCount}/{s.batchCount}</div>
-                    </div>
-                    <div className="rounded bg-bronze-50/70 p-2">
-                      <div className="text-ink-100 flex items-center gap-1"><Wind className="h-3 w-3" />揭纸问题</div>
-                      <div className={[
-                        'mt-0.5 font-semibold tabular-nums',
-                        s.releaseIssues === 0 ? 'text-bamboo-600' : 'text-cinnabar-500',
-                      ].join(' ')}>{s.releaseIssues} 次</div>
-                    </div>
-                  </div>
-                  {Object.keys(s.qualityDist).length > 0 && (
-                    <div className="mt-3 flex items-center gap-1.5 flex-wrap text-[10px]">
-                      {(['优', '良', '合格', '不合格'] as const).map((lv) => (
-                        s.qualityDist[lv] && (
-                          <Badge key={lv} tone={
-                            lv === '优' ? 'bamboo' : lv === '良' ? 'bronze' : lv === '合格' ? 'rattan' : 'cinnabar'
-                          } size="sm">
-                            {lv} {s.qualityDist[lv]}
-                          </Badge>
-                        )
-                      ))}
+                    {Object.keys(s.qualityDist).length > 0 && (
+                      <div className="mt-3 flex items-center gap-1.5 flex-wrap text-[10px]">
+                        {(['优', '良', '合格', '不合格'] as const).map((lv) => (
+                          s.qualityDist[lv] && (
+                            <Badge key={lv} tone={
+                              lv === '优' ? 'bamboo' : lv === '良' ? 'bronze' : lv === '合格' ? 'rattan' : 'cinnabar'
+                            } size="sm">
+                              {lv} {s.qualityDist[lv]}
+                            </Badge>
+                          )
+                        ))}
+                      </div>
+                    )}
+                  </button>
+
+                  {isExpanded && (
+                    <div className="border-t border-bronze-200/60 bg-white/70 p-3.5">
+                      <div className="mb-2.5 flex items-center justify-between">
+                        <div className="text-[11px] font-semibold text-ink-200 flex items-center gap-1">
+                          <LineChart className="h-3.5 w-3.5 text-bronze-500" />
+                          最近 {s.recentBatches.length} 批 CV 走势 & 超差情况
+                        </div>
+                        <div className="flex items-center gap-2 text-[10px] text-ink-100">
+                          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-cinnabar-400" />超差</span>
+                          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-rattan-400" />揭纸问题</span>
+                        </div>
+                      </div>
+                      <div className="space-y-1.5 max-h-[260px] overflow-y-auto pr-1">
+                        {s.recentBatches.map((b, idx) => {
+                          const isOver = b.maxDeviation_pct > b.tolerance_pct;
+                          const hasReleaseIssue = b.papermakingRecord && (b.papermakingRecord.releaseSituation === '粘连' || b.papermakingRecord.releaseSituation === '破损');
+                          const cvPct = Math.min(100, (b.uniformityCV_pct / maxCV) * 100);
+                          const gramDev = Math.abs(b.actualAvgGrammage - b.targetGrammage) / b.targetGrammage * 100;
+                          return (
+                            <div key={b.id} className="group">
+                              <div className="mb-0.5 flex items-center justify-between text-[10px]">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-display font-semibold tabular-nums text-bronze-600 w-16">{b.batchNo}</span>
+                                  <span className="text-ink-100">{b.date}</span>
+                                  {isOver && <Badge tone="cinnabar" size="sm" className="h-4">超差</Badge>}
+                                  {hasReleaseIssue && <Badge tone="rattan" size="sm" className="h-4">揭纸问题</Badge>}
+                                </div>
+                                <div className="flex items-center gap-2 tabular-nums">
+                                  <span className="text-ink-200">CV <span className={[
+                                    'font-semibold',
+                                    b.uniformityCV_pct < 5 ? 'text-bamboo-600' : b.uniformityCV_pct < 10 ? 'text-bronze-600' : 'text-cinnabar-500',
+                                  ].join(' ')}>{b.uniformityCV_pct.toFixed(2)}%</span></span>
+                                  <span className="text-ink-200">|</span>
+                                  <span className="text-ink-200">克重 <span className={[
+                                    'font-semibold',
+                                    gramDev < 3 ? 'text-bamboo-600' : gramDev < 7 ? 'text-bronze-600' : 'text-cinnabar-500',
+                                  ].join(' ')}>{b.actualAvgGrammage.toFixed(1)}g</span></span>
+                                  <Badge tone={
+                                    b.qualityLevel === '优' ? 'bamboo' : b.qualityLevel === '良' ? 'bronze' : b.qualityLevel === '合格' ? 'rattan' : 'cinnabar'
+                                  } size="sm" className="h-4">{b.qualityLevel}</Badge>
+                                </div>
+                              </div>
+                              <div className="relative h-4 overflow-hidden rounded bg-bronze-50">
+                                <div
+                                  className={[
+                                    'absolute left-0 top-0 h-full rounded transition-all',
+                                    isOver
+                                      ? 'bg-gradient-to-r from-cinnabar-300 to-cinnabar-500'
+                                      : b.uniformityCV_pct < 5
+                                      ? 'bg-gradient-to-r from-bamboo-300 to-bamboo-500'
+                                      : b.uniformityCV_pct < 10
+                                      ? 'bg-gradient-to-r from-bronze-300 to-bronze-500'
+                                      : 'bg-gradient-to-r from-rattan-300 to-rattan-500',
+                                  ].join(' ')}
+                                  style={{ width: `${cvPct}%` }}
+                                />
+                                <div className="absolute left-0 top-0 flex h-full w-full items-center justify-between px-2 text-[9px] text-white/90">
+                                  <span className="font-medium drop-shadow-sm">{b.targetGrammage}g目</span>
+                                  <span className="font-medium drop-shadow-sm">±{b.tolerance_pct}%公差</span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {s.overToleranceCount > 0 && (
+                        <div className="mt-3 rounded-lg border border-cinnabar-200 bg-cinnabar-50/60 p-2.5 text-[10px] text-cinnabar-500 flex items-start gap-2">
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-semibold">稳定性预警：</span>
+                            共 {s.overToleranceCount} 批超出公差范围，
+                            {(() => {
+                              const worst = [...s.recentBatches]
+                                .filter((b) => b.maxDeviation_pct > b.tolerance_pct)
+                                .sort((a, b) => b.maxDeviation_pct - a.maxDeviation_pct)[0];
+                              return worst
+                                ? `最严重为 ${worst.batchNo}（偏差 ${worst.maxDeviation_pct.toFixed(1)}%），建议重点检查打浆度 ${worst.configSnapshot.beatingDegree_SR}°SR、纸药用量 ${worst.configSnapshot.sizingDose_pct}% 是否合适。`
+                                : '';
+                            })()}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
-                </button>
+                </div>
               );
             })}
           </div>
